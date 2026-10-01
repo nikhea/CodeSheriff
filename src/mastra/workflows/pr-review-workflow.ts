@@ -110,6 +110,31 @@ const aggregatedSchema = prBaseSchema.extend(aggregateSummarySchema.shape).exten
 
 const finalOutputSchema = aggregatedSchema.extend({ posted: postedSchema });
 
+/**
+ * Build a review summary from salvaged model prose. Extracts the model's own
+ * score/verdict instead of stamping defaults — a hardcoded 7/COMMENT over
+ * model prose produces self-contradicting reviews.
+ */
+export function parseSalvagedReview(prose: string): z.infer<typeof aggregateSummarySchema> {
+  const empty = {
+    criticalIssues: [],
+    securityConcerns: [],
+    performanceNotes: [],
+    suggestions: [],
+    positiveNotes: [],
+  };
+  const scoreMatch = prose.match(/Quality Score:\s*(\d{1,2})/i);
+  const verdictMatch = prose.match(/Verdict:\s*(APPROVE|REQUEST_CHANGES|COMMENT)/i);
+  let qualityScore = 7;
+  if (scoreMatch) qualityScore = Math.min(10, Math.max(1, parseInt(scoreMatch[1], 10)));
+  const v = verdictMatch?.[1]?.toUpperCase();
+  const verdict = (v === "APPROVE" || v === "REQUEST_CHANGES" ? v : "COMMENT") as
+    | "APPROVE"
+    | "REQUEST_CHANGES"
+    | "COMMENT";
+  return { summary: prose.slice(0, 4000), qualityScore, verdict, ...empty };
+}
+
 const fetchPRContext = createStep({
   id: "fetch-pr-context",
   description: "Fetch PR metadata and file list via Octokit installation auth",
@@ -384,18 +409,9 @@ Rules:
       },
       "aggregate-findings",
       mastra?.getLogger?.(),
-      // If the model answered in prose, post the prose as the summary
-      // rather than "Review could not be generated."
-      (prose) => ({
-        summary: prose.slice(0, 4000),
-        qualityScore: 7,
-        verdict: "COMMENT" as const,
-        criticalIssues: [],
-        securityConcerns: [],
-        performanceNotes: [],
-        suggestions: [],
-        positiveNotes: [],
-      }),
+      // If the model answered in prose, salvage its own score/verdict
+      // rather than stamping defaults over its words.
+      (prose) => parseSalvagedReview(prose),
       30,
       prMemory(owner, repo, pullNumber)
     );
