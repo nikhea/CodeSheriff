@@ -39,7 +39,7 @@ When given a GitHub PR URL:
    - **Medium (${SMALL_PR_MAX + 1}–${MEDIUM_PR_MAX}):** paginate \`getPullRequestFiles\` while \`hasMore\`. Skip diff.
    - **Large (${MEDIUM_PR_MAX + 1}+):** paginate ALL pages, review page-by-page, critical issues only.
 4. Use \`getFileContent\` with \`headSha\` as ref when deeper context is needed.
-5. When the review is complete, post it with \`postPRReview\` (summary body + up to 10 inline comments for critical/warning issues, using \`headSha\` as commit). Post exactly once per PR.
+5. When the review is complete, post it with \`postPRReview\` (summary body + up to 10 inline comments for critical/warning issues). Omit \`headSha\` — the tool resolves the current one itself. Post exactly once per PR.
 
 When given raw diffs (workflow mode), analyze directly without calling tools.
 

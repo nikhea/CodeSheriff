@@ -136,7 +136,7 @@ export const postPRReview = createTool({
   description:
     "Post a review on a PR via Octokit Reviews API: summary body plus optional inline comments. Always uses event COMMENT (non-blocking) for v1. At most 10 inline comments are kept; extras are dropped.",
   inputSchema: prIdentifierSchema.extend({
-    headSha: z.string().describe("Head commit SHA the review applies to (from getPullRequest)."),
+    headSha: z.string().optional().describe("Head commit SHA. Omit to auto-resolve from the PR (recommended)."),
     body: z.string().describe("Summary markdown. Include a `file:line`-style breakdown; inline comments carry the details."),
     comments: z
       .array(
@@ -157,7 +157,15 @@ export const postPRReview = createTool({
   }),
   execute: async (inputData, context) => {
     const octokit = await resolveOctokit(context);
-    const { owner, repo, pullNumber, headSha, body } = inputData;
+    const { owner, repo, pullNumber, body } = inputData;
+    // Auto-resolve headSha so the agent can't post against a stale SHA.
+    const headSha =
+      inputData.headSha ??
+      (
+        await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+          owner, repo, pull_number: pullNumber,
+        })
+      ).data.head.sha;
     const comments = (inputData.comments ?? []).slice(0, 10).map((c) => ({ ...c, side: "RIGHT" as const }));
 
     const attempt = (cs: typeof comments, note?: string) =>
