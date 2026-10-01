@@ -15,6 +15,7 @@ import { prReviewWorkflow } from "./workflows/pr-review-workflow";
 import { weatherAgent } from "./agents/weather-agent";
 import { codeReviewAgent } from "./agents/code-review-agent";
 import { workflowReviewAgent } from "./agents/workflow-review-agent";
+import { issueTriageAgent } from "./agents/issue-triage-agent";
 import {
   toolCallAppropriatenessScorer,
   completenessScorer,
@@ -28,7 +29,7 @@ logEnvStatus(console);
 
 export const mastra = new Mastra({
   workflows: { weatherWorkflow, prReviewWorkflow },
-  agents: { weatherAgent, codeReviewAgent, workflowReviewAgent },
+  agents: { weatherAgent, codeReviewAgent, workflowReviewAgent, issueTriageAgent },
   scorers: {
     toolCallAppropriatenessScorer,
     completenessScorer,
