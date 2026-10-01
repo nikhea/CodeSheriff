@@ -1,30 +1,68 @@
 # CodeSheriff
 
-Welcome to your new [Mastra](https://mastra.ai/) project! We're excited to see what you'll build.
+A GitHub App (built on [Mastra](https://mastra.ai/)) that reviews pull requests, replies to @mentions, and triages issues — checking each one against what the repo is actually building.
 
-## Getting Started
+## What it does
 
-Start the development server:
+- **PR reviews** — on `pull_request.opened` / `synchronize`, posts a structured review (score + verdict, critical/security/performance sections, inline comments for criticals) via the Reviews API. Clean PRs get coverage proof, not prose; model hiccups are salvaged, never silently stamped.
+- **@mention replies** — `@xcodesheriff-bot` in any PR/issue thread gets a contextual reply (review-related mentions only). Structured reviews stay on the Reviews path; thread replies are plain comments.
+- **Issue triage** — on `issues.opened`, classifies BUG / FEATURE / QUESTION / CHORE, judges ALIGNED / MISALIGNED / UNCLEAR against the repo's live vision (description + topics + README, never assumed), posts a verdict comment, and sets labels. Human comments trigger follow-up passes; closing drops queued work.
+- **Live progress** — both pipelines stream events over SSE:
+  - `GET /reviews/progress/:owner/:repo/:pullNumber`
+  - `GET /triage/progress/:owner/:repo/:issueNumber`
 
-```shell
-bun run dev
+## Prerequisites
+
+- Bun, Redis (6.2+ in prod; local 6.0 works for dev), an `ngrok` (or similar) tunnel for webhooks
+- A GitHub App with permissions **Pull requests / Issues: Read & write**, **Metadata: Read-only**, subscribed to **Pull request**, **Issues**, **Issue comment**, and **Pull request review comment** events
+- Model gateway credentials for `ollama-cloud/gpt-oss:120b` (primary) with `nvidia/meta/muse-glimmer-30b` fallback
+
+## Setup
+
+```bash
+cp .env.example .env   # fill in GITHUB_APP_ID, GITHUB_PRIVATE_KEY (\n-escaped PEM), GITHUB_WEBHOOK_SECRET
+bun install
+bun dev:all            # dev server (:4111) + queue worker
 ```
 
-Open [http://localhost:4111](http://localhost:4111) in your browser to access [Mastra Studio](https://mastra.ai/docs/studio/overview). It provides an interactive UI for building and testing your agents, along with a REST API that exposes your Mastra application as a local service. This lets you start building without worrying about integration right away.
+Point the App's webhook URL at `https://<tunnel>/webhooks/github`, and the
+channel adapter events at `https://<tunnel>/api/agents/code-review-agent/channels/github/webhook`.
+Find the bot's numeric id for `GITHUB_BOT_USER_ID` (loop prevention) with:
 
-You can start editing files inside the `src/mastra` directory. The development server will automatically reload whenever you make changes.
+```bash
+curl -s 'https://api.github.com/users/xcodesheriff-bot%5Bbot%5D' | grep '"id"'
+```
 
-## Learn more
+## Scripts
 
-To learn more about Mastra, visit our [documentation](https://mastra.ai/docs/). Your bootstrapped project includes example code for [agents](https://mastra.ai/docs/agents/overview), [tools](https://mastra.ai/docs/agents/using-tools), [workflows](https://mastra.ai/docs/workflows/overview), [scorers](https://mastra.ai/docs/evals/overview), and [observability](https://mastra.ai/docs/observability/overview).
+| Command                | Purpose                                              |
+| ---------------------- | ---------------------------------------------------- |
+| `bun dev:all`          | dev server + worker (normal local run)               |
+| `bun run dev`          | server only                                          |
+| `bun run worker`       | worker only (`pr-review` + `issue-triage` queues)    |
+| `bun run check:skills` | drift guard: on-disk SKILL.md vs inlined copies     |
+| `bun run build`        | `mastra build`                                       |
 
-If you're new to AI agents, check out our [course](https://mastra.ai/learn) and [YouTube videos](https://youtube.com/@mastra-ai). You can also join our [Discord](https://discord.gg/BTYqqHKUrf) community to get help and share your projects.
+> The worker is a plain `bun` process with no hot-reload — restart `dev:all`
+> after any code change, or the worker keeps running stale code.
 
-## Deploy to the Mastra platform
+## How it's wired
 
-The [Mastra platform](https://projects.mastra.ai) provides two products for deploying and managing AI applications built with the Mastra framework:
+```
+GitHub webhook → /webhooks/github → BullMQ (pr-review / issue-triage)
+    → worker → pr-review-workflow (fetch → categorize → review → aggregate → post)
+             → issue-triage-agent (classify → vision check → verdict + labels)
+```
 
-- **Studio**: A hosted visual environment for testing agents, running workflows, and inspecting traces
-- **Server**: A production deployment target that runs your Mastra application as an API server
+- Agents: `code-review-agent` (tools + 3 review skills), `workflow-review-agent`
+  (tool-less, structured JSON), `issue-triage-agent` (tools + 2 triage skills).
+- Skills are inline `createSkill` copies (`src/mastra/skills/`); `check:skills`
+  fails on drift from the on-disk sources.
+- Shared `rallyaMemory` (repo-profile working memory) plus Redis Streams pub/sub
+  so server + worker coordinate across processes.
 
-Learn more in the [Mastra platform documentation](https://mastra.ai/docs/mastra-platform/overview).
+## Docs
+
+- `ROADMAP.md` — phased plan (fixes, hardening, mention-replies, triage, lifecycle)
+- `IMPLEMENTATION_PLAN.md` — original PR-review pipeline spec
+- `.env.example` — full env contract
