@@ -15,7 +15,7 @@ function requiredEnv(name: string): string {
   if (!v || v.trim() === "") {
     throw new Error(
       `[github-app] Missing required env ${name}. ` +
-        `Set GITHUB_APP_ID, GITHUB_PRIVATE_KEY (\\n-escaped PEM), GITHUB_WEBHOOK_SECRET, REDIS_URL, OPENAI_API_KEY.`
+        `Set GITHUB_APP_ID, GITHUB_PRIVATE_KEY (\\n-escaped PEM), GITHUB_WEBHOOK_SECRET.`
     );
   }
   return v;
@@ -29,9 +29,9 @@ export function getGitHubApp(): App {
   const webhookSecret = requiredEnv("GITHUB_WEBHOOK_SECRET");
 
   // .env can't hold multiline PEM, so we store \n escapes and restore here.
-  const privateKey = privateKeyRaw.includes("\\n")
-    ? privateKeyRaw.replace(/\\n/g, "\n")
-    : privateKeyRaw;
+  // Normalize CRLF first so pasted Windows-style keys don't break @octokit/app.
+  const normalized = privateKeyRaw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const privateKey = normalized.includes("\\n") ? normalized.replace(/\\n/g, "\n") : normalized;
 
   if (!privateKey.includes("BEGIN") || !privateKey.includes("PRIVATE KEY")) {
     throw new Error(

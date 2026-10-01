@@ -2,7 +2,7 @@ import { Agent } from "@mastra/core/agent";
 
 /**
  * Lightweight reviewer used exclusively by the PR review workflow.
- * - Cheaper/faster model (gpt-4o-mini)
+ * - Fallback chain (muse-glimmer-30b primary, gpt-oss:120b backup)
  * - NO tools — workflow feeds diffs directly
  * - Structured-findings focus; aggregation happens downstream
  */

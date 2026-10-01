@@ -77,8 +77,9 @@ export const githubWebhookRoute = registerApiRoute("/webhooks/github", {
     }
 
     logger.info?.(
-      `[webhook] pull_request.${action} delivery=${delivery} repo=${owner}/${repo} pr=${pullNumber} sha=${headSha} install=${installationId}`
+      `[webhook] pull_request.${action} delivery=${delivery} repo=${owner}/${repo} pr=${pullNumber} sha=${headSha}`
     );
+    (logger as any).debug?.(`[webhook] install=${installationId} delivery=${delivery}`);
 
     // Phase 5: durable execution via BullMQ (deduped by PR+SHA).
     // Falls back to 202-acknowledged (manual Studio run) if Redis is down.
