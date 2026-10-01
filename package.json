@@ -17,7 +17,8 @@
   "scripts": {
     "dev": "mastra dev",
     "build": "mastra build",
-    "start": "mastra start"
+    "start": "mastra start",
+    "worker": "bun src/mastra/queue/worker.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.73.0",

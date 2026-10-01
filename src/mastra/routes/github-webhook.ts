@@ -1,5 +1,6 @@
 import { registerApiRoute } from "@mastra/core/server";
 import { Webhooks } from "@octokit/webhooks";
+import { enqueuePRReview, prJobId } from "../queue/pr-queue";
 
 /**
  * GitHub App webhook ingress.
@@ -79,13 +80,27 @@ export const githubWebhookRoute = registerApiRoute("/webhooks/github", {
       `[webhook] pull_request.${action} delivery=${delivery} repo=${owner}/${repo} pr=${pullNumber} sha=${headSha} install=${installationId}`
     );
 
-    // Phase 5 wires BullMQ here:
-    // await prReviewQueue.add("review", { owner, repo, pullNumber, installationId, headSha, action }, { jobId: `pr-${owner}-${repo}-${pullNumber}-${headSha}` });
-    // Phase 6 adds posting. For now acknowledge — direct workflow runs stay manual in Studio.
-
-    return c.json(
-      { received: true, queued: false, owner, repo, pullNumber, headSha, action, delivery },
-      202
-    );
+    // Phase 5: durable execution via BullMQ (deduped by PR+SHA).
+    // Falls back to 202-acknowledged (manual Studio run) if Redis is down.
+    try {
+      const { jobId } = await enqueuePRReview({
+        owner,
+        repo,
+        pullNumber,
+        installationId,
+        headSha,
+        action,
+      });
+      return c.json(
+        { received: true, queued: true, jobId, owner, repo, pullNumber, headSha, action, delivery },
+        202
+      );
+    } catch (err: any) {
+      logger.error?.(`[webhook] enqueue failed: ${err?.message ?? err} (jobId=${prJobId({ owner, repo, pullNumber, installationId, headSha })})`);
+      return c.json(
+        { received: true, queued: false, error: "queue unavailable", owner, repo, pullNumber, headSha, action, delivery },
+        202
+      );
+    }
   },
 });
