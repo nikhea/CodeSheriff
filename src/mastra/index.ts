@@ -11,11 +11,15 @@ import { weatherAgent } from './agents/weather-agent';
 import { codeReviewAgent } from './agents/code-review-agent';
 import { workflowReviewAgent } from './agents/workflow-review-agent';
 import { toolCallAppropriatenessScorer, completenessScorer, translationScorer } from './scorers/weather-scorer';
+import { githubWebhookRoute } from './routes/github-webhook';
 
 export const mastra = new Mastra({
   workflows: { weatherWorkflow, prReviewWorkflow },
   agents: { weatherAgent, codeReviewAgent, workflowReviewAgent },
   scorers: { toolCallAppropriatenessScorer, completenessScorer, translationScorer },
+  server: {
+    apiRoutes: [githubWebhookRoute],
+  },
   storage: new MastraCompositeStore({
     id: 'composite-storage',
     default: new LibSQLStore({
