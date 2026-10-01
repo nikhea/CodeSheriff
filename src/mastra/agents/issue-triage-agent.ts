@@ -40,6 +40,9 @@ Given owner/repo/issueNumber:
 3. Use \`getFileContent\` to read README.md at the default branch as ref.
    If missing, say so and judge from description + topics only — never invent
    a vision the repo doesn't state.
+4. Owner/repo come ONLY from the run prompt (worker) or your own verified
+   fetch. If either is unknown, STOP and ask — never call tools with "?",
+   placeholders, or guesses.
 4. Classify: **BUG** (something built broken), **FEATURE** (new capability),
    **QUESTION** (support/how-to), or **CHORE** (deps, docs, housekeeping).
 5. Judge alignment: does this issue serve what the repo declares it builds?

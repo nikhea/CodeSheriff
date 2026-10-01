@@ -25,9 +25,25 @@ async function gh(octokit: any, path: string, params: any, ref: string) {
   }
 }
 
+/** Owner/repo must be real identifiers — never placeholders. A literal
+ *  "?" or empty value means the caller didn't ground the repo: fail fast
+ *  with a message that says so instead of sending a doomed GitHub 404. */
+const ownerSchema = z
+  .string()
+  .min(1)
+  .refine((s) => s.trim() !== "" && s.trim() !== "?" && !s.includes("?"), {
+    message: "owner must be the real repo owner (from the run prompt or getRepository) — never '?' or empty",
+  });
+const repoSchema = z
+  .string()
+  .min(1)
+  .refine((s) => s.trim() !== "" && s.trim() !== "?" && !s.includes("?"), {
+    message: "repo must be the real repo name (from the run prompt or getRepository) — never '?' or empty",
+  });
+
 const issueIdentifierSchema = z.object({
-  owner: z.string().describe("Repository owner (user or organization)"),
-  repo: z.string().describe("Repository name"),
+  owner: ownerSchema.describe("Repository owner (user or organization)"),
+  repo: repoSchema.describe("Repository name"),
   issueNumber: z.number().describe("Issue number"),
 });
 
@@ -76,8 +92,8 @@ export const getRepository = createTool({
   description:
     "Fetch repo vision primitives: description, topics, default branch, open-issue count. This is the primary 'what are we building' source — always call it before judging alignment.",
   inputSchema: z.object({
-    owner: z.string(),
-    repo: z.string(),
+    owner: ownerSchema,
+    repo: repoSchema,
   }),
   outputSchema: z.object({
     fullName: z.string(),
