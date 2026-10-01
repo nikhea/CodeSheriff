@@ -132,7 +132,10 @@ export function parseSalvagedReview(prose: string): z.infer<typeof aggregateSumm
     | "APPROVE"
     | "REQUEST_CHANGES"
     | "COMMENT";
-  return { summary: prose.slice(0, 4000), qualityScore, verdict, ...empty };
+  const summary =
+    prose.slice(0, 4000) +
+    "\n\n> Note: score and verdict were recovered from model prose (structured synthesis failed).";
+  return { summary, qualityScore, verdict, ...empty };
 }
 
 const fetchPRContext = createStep({
@@ -299,7 +302,7 @@ ${reviewDepth}
 
 ${sections}
 
-For EACH file, return an entry with the filename and an array of issues found (empty array if none). Be specific with line numbers from the diff.`;
+For EACH file, return an entry with the filename and an array of issues found (empty array if none). Be specific with line numbers from the diff. Even with zero findings, return the full JSON array — never prose.`;
     }
 
     async function reviewBatch(batch: FileEntry[], idx: number) {
@@ -391,7 +394,8 @@ Rules:
 - qualityScore: 1–10
 - verdict: REQUEST_CHANGES if critical issues exist, APPROVE if quality is high, COMMENT otherwise
 - Be specific with file:line references
-- Deduplicate similar issues across files`;
+- Deduplicate similar issues across files
+- Even with zero findings, return the full JSON object — never prose`;
 
     const summary = await generateStructured<z.infer<typeof aggregateSummarySchema>>(
       agent,
