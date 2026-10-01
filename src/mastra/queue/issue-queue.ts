@@ -56,10 +56,15 @@ export function startIssueWorker(mastra: any) {
       const requestContext = new RequestContext();
       requestContext.set("installationId" as any, installationId);
 
+      // Thread per issue, resource per repo — shares the repo profile
+      // (past-verdict calibration) with the review agents.
       const agent = mastra.getAgentById("issue-triage-agent");
       const result = await agent.generate(
         `Triage the newly opened issue ${owner}/${repo}#${issueNumber}: fetch it, check it against what the repo is building, post the verdict comment, set labels.`,
-        { requestContext } as any
+        {
+          requestContext,
+          memory: { thread: `issue-${owner}-${repo}-${issueNumber}`, resource: `repo-${owner}/${repo}` },
+        } as any
       );
       logger.info?.(
         `[issue-worker] done job=${job.id} finish=${(result as any)?.finishReason ?? "unknown"}`

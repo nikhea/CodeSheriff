@@ -14,9 +14,36 @@ async function resolveOctokit(context?: { requestContext?: any }) {
   return getInstallationOctokit(installationId);
 }
 
+/** Wrap Octokit calls so failures carry the issue identity and HTTP status
+ *  as a plain message — never a bare object the agent renders as [object Object]. */
+async function gh(octokit: any, path: string, params: any, ref: string) {
+  try {
+    return await octokit.request(path, params);
+  } catch (err: any) {
+    const status = typeof err?.status === "number" ? ` (HTTP ${err.status})` : "";
+    throw new Error(`GitHub ${path} for ${ref} failed${status}: ${err?.message ?? err}`);
+  }
+}
+
+/** Owner/repo must be real identifiers — never placeholders. A literal
+ *  "?" or empty value means the caller didn't ground the repo: fail fast
+ *  with a message that says so instead of sending a doomed GitHub 404. */
+const ownerSchema = z
+  .string()
+  .min(1)
+  .refine((s) => s.trim() !== "" && s.trim() !== "?" && !s.includes("?"), {
+    message: "owner must be the real repo owner (from the run prompt or getRepository) — never '?' or empty",
+  });
+const repoSchema = z
+  .string()
+  .min(1)
+  .refine((s) => s.trim() !== "" && s.trim() !== "?" && !s.includes("?"), {
+    message: "repo must be the real repo name (from the run prompt or getRepository) — never '?' or empty",
+  });
+
 const issueIdentifierSchema = z.object({
-  owner: z.string().describe("Repository owner (user or organization)"),
-  repo: z.string().describe("Repository name"),
+  owner: ownerSchema.describe("Repository owner (user or organization)"),
+  repo: repoSchema.describe("Repository name"),
   issueNumber: z.number().describe("Issue number"),
 });
 
@@ -40,11 +67,12 @@ export const getIssue = createTool({
   outputSchema: issueSchema,
   execute: async (inputData, context) => {
     const octokit = await resolveOctokit(context);
-    const { data } = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}", {
+    const ref = `${inputData.owner}/${inputData.repo}#${inputData.issueNumber}`;
+    const { data } = await gh(octokit, "GET /repos/{owner}/{repo}/issues/{issue_number}", {
       owner: inputData.owner,
       repo: inputData.repo,
       issue_number: inputData.issueNumber,
-    });
+    }, ref);
     return {
       number: data.number,
       title: data.title,
@@ -64,8 +92,8 @@ export const getRepository = createTool({
   description:
     "Fetch repo vision primitives: description, topics, default branch, open-issue count. This is the primary 'what are we building' source — always call it before judging alignment.",
   inputSchema: z.object({
-    owner: z.string(),
-    repo: z.string(),
+    owner: ownerSchema,
+    repo: repoSchema,
   }),
   outputSchema: z.object({
     fullName: z.string(),
@@ -76,10 +104,11 @@ export const getRepository = createTool({
   }),
   execute: async (inputData, context) => {
     const octokit = await resolveOctokit(context);
-    const { data } = await octokit.request("GET /repos/{owner}/{repo}", {
+    const ref = `${inputData.owner}/${inputData.repo}`;
+    const { data } = await gh(octokit, "GET /repos/{owner}/{repo}", {
       owner: inputData.owner,
       repo: inputData.repo,
-    });
+    }, ref);
     return {
       fullName: data.full_name,
       description: (data.description as string | null) ?? null,
@@ -100,32 +129,43 @@ export const postIssueComment = createTool({
   outputSchema: z.object({ commentId: z.number().nullable() }),
   execute: async (inputData, context) => {
     const octokit = await resolveOctokit(context);
-    const { data } = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+    const ref = `${inputData.owner}/${inputData.repo}#${inputData.issueNumber}`;
+    const { data } = await gh(octokit, "POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
       owner: inputData.owner,
       repo: inputData.repo,
       issue_number: inputData.issueNumber,
       body: inputData.body,
-    });
+    }, ref);
     return { commentId: (data as any)?.id ?? null };
   },
 });
 
+const ALIGNMENT_LABELS = ["triaged-aligned", "triaged-misaligned", "triaged-unclear"] as const;
+const TYPE_LABELS = ["bug", "enhancement", "question", "chore"] as const;
+
 export const setIssueLabels = createTool({
   id: "set-issue-labels",
   description:
-    "Replace an issue's labels via Octokit. Use alignment labels (e.g. triaged-aligned, triaged-misaligned) plus a type label (bug, enhancement, question, chore). Creates repo labels implicitly.",
+    "Label the issue with exactly one alignment label and one type label. The tool fetches current labels, drops stale triaged-*/type labels, and merges server-side — the caller never assembles label arrays, so label spam is impossible.",
   inputSchema: issueIdentifierSchema.extend({
-    labels: z.array(z.string()).describe("Full desired label set for the issue."),
+    alignment: z.enum(ALIGNMENT_LABELS).describe("Exactly one alignment verdict."),
+    typeLabel: z.enum(TYPE_LABELS).describe("Exactly one issue type."),
   }),
   outputSchema: z.object({ labels: z.array(z.string()) }),
   execute: async (inputData, context) => {
     const octokit = await resolveOctokit(context);
-    const { data } = await octokit.request("PUT /repos/{owner}/{repo}/issues/{issue_number}/labels", {
-      owner: inputData.owner,
-      repo: inputData.repo,
-      issue_number: inputData.issueNumber,
-      labels: inputData.labels,
-    });
+    const { owner, repo, issueNumber, alignment, typeLabel } = inputData;
+    const ref = `${owner}/${repo}#${issueNumber}`;
+    const { data: current } = await gh(octokit, "GET /repos/{owner}/{repo}/issues/{issue_number}/labels", {
+      owner, repo, issue_number: issueNumber,
+    }, ref);
+    const kept = ((current ?? []) as any[])
+      .map((l) => (typeof l === "string" ? l : l.name))
+      .filter((name: string) => !ALIGNMENT_LABELS.includes(name as any) && !TYPE_LABELS.includes(name as any));
+    const labels = [...kept, alignment, typeLabel];
+    const { data } = await gh(octokit, "PUT /repos/{owner}/{repo}/issues/{issue_number}/labels", {
+      owner, repo, issue_number: issueNumber, labels,
+    }, ref);
     return { labels: ((data ?? []) as any[]).map((l) => (typeof l === "string" ? l : l.name)) };
   },
 });
