@@ -1,6 +1,7 @@
 import { Queue, Worker, type Job } from "bullmq";
 import IORedis from "ioredis";
 import { RequestContext } from "@mastra/core/request-context";
+import { postFailedComment } from "../lib/github-post";
 
 export interface PRReviewJobData {
   owner: string;
@@ -79,7 +80,16 @@ export function startPRWorker(mastra: any) {
         requestContext,
       } as any);
 
-      logger.info?.(`[pr-worker] done job=${job.id} status=${(result as any)?.status ?? "unknown"}`);
+      const status = (result as any)?.status ?? "unknown";
+      logger.info?.(`[pr-worker] done job=${job.id} status=${status}`);
+      if (status === "failed") {
+        // Throw so BullMQ retries (attempts/backoff on the queue). Only leave
+        // the failure note on the final attempt — don't spam per retry.
+        if (job.attemptsMade >= 2) {
+          await postFailedComment({ owner, repo, pullNumber, installationId, headSha: headSha ?? "" });
+        }
+        throw new Error(`workflow failed for ${owner}/${repo}#${pullNumber}`);
+      }
       return { ok: true };
     },
     {

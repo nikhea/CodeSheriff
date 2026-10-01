@@ -1,6 +1,7 @@
 import { registerApiRoute } from "@mastra/core/server";
 import { Webhooks } from "@octokit/webhooks";
 import { enqueuePRReview, prJobId } from "../queue/pr-queue";
+import { postStartedComment } from "../lib/github-post";
 
 /**
  * GitHub App webhook ingress.
@@ -92,6 +93,9 @@ export const githubWebhookRoute = registerApiRoute("/webhooks/github", {
         headSha,
         action,
       });
+      // In-progress indication on the PR (best-effort; never blocks the 202).
+      const startedId = await postStartedComment({ owner, repo, pullNumber, installationId, headSha });
+      logger.info?.(`[webhook] queued job=${jobId} startedComment=${startedId ?? "none"}`);
       return c.json(
         { received: true, queued: true, jobId, owner, repo, pullNumber, headSha, action, delivery },
         202
