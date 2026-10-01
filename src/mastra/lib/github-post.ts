@@ -62,8 +62,33 @@ export async function deleteProgressComment(input: ProgressInput): Promise<boole
   }
 }
 
-/** Leave a failure note so a stuck "started" placeholder isn't the last word. Best-effort. */
-export async function postFailedComment(input: ProgressInput): Promise<void> {
+/** Refresh the placeholder mid-run (called once per run). Best-effort, never throws. */
+export async function updateProgressComment(
+  octokit: any,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  headSha: string,
+  line: string
+): Promise<void> {
+  try {
+    const { data } = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+      owner, repo, issue_number: pullNumber, per_page: 100,
+    });
+    const hit = (data as any[]).find(
+      (c) => typeof c?.body === "string" && c.body.includes(progressMarker(headSha))
+    );
+    if (!hit) return;
+    await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
+      owner, repo, comment_id: hit.id,
+      body: `${line}\n\n${progressMarker(headSha)}`,
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Leave a failure note so a stuck "started" placeholder isn't the last word. Best-effort. */export async function postFailedComment(input: ProgressInput): Promise<void> {
   try {
     const octokit = await getInstallationOctokit(input.installationId);
     await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {

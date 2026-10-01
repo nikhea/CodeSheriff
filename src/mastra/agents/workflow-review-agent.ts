@@ -1,4 +1,9 @@
 import { Agent } from "@mastra/core/agent";
+import {
+  codeStandardsSkill,
+  performanceReviewSkill,
+  securityReviewSkill,
+} from "../skills/review-skills";
 
 /**
  * Lightweight reviewer used exclusively by the PR review workflow.
@@ -37,4 +42,5 @@ export const workflowReviewAgent = new Agent({
 - Heed the Repo Review Profile in working memory (conventions, known risks, calibration) when present; the Observer keeps it updated, you only read it.
 
 Also apply the repo's code-standards, security-review, and performance-review skills.`,
+  skills: [codeStandardsSkill, securityReviewSkill, performanceReviewSkill],
 });

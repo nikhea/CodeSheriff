@@ -10,8 +10,9 @@ import {
   reviewOutputSchema,
 } from "../lib/schemas";
 import { SKIP_PATTERNS, MEDIUM_PR_MAX, getReviewDepth, MIN_DELETION_ONLY_LINES } from "../lib/review-config";
-import { postReviewToGitHub } from "../lib/github-post";
+import { postReviewToGitHub, updateProgressComment } from "../lib/github-post";
 import { generateStructured } from "../lib/structured";
+import { emitProgress, type ReviewEvent } from "../lib/review-events";
 
 /** Memory identity for a PR run: thread per PR, resource per repo. */
 function prMemory(owner: string, repo: string, pullNumber: number) {
@@ -114,7 +115,7 @@ const fetchPRContext = createStep({
   description: "Fetch PR metadata and file list via Octokit installation auth",
   inputSchema: prIdentifierSchema,
   outputSchema: prContextSchema,
-  execute: async ({ inputData, requestContext }) => {
+  execute: async ({ inputData, requestContext, writer }) => {
     const { owner, repo, pullNumber } = inputData;
     const octokit = await getInstallationOctokit(resolveInstallationId(requestContext));
     const [{ data: pr }, files] = await Promise.all([
@@ -123,6 +124,11 @@ const fetchPRContext = createStep({
       }),
       fetchAllPRFiles(octokit, owner, repo, pullNumber),
     ]);
+    await emitProgress(writer, owner, repo, pullNumber, { type: "started", pr: pullNumber });
+    await emitProgress(writer, owner, repo, pullNumber, {
+      type: "analysis",
+      message: `Fetched "${pr.title}" by ${pr.user?.login ?? "ghost"}: +${pr.additions}/-${pr.deletions} across ${pr.changed_files} files`,
+    });
     return {
       owner,
       repo,
@@ -208,7 +214,7 @@ const reviewFiles = createStep({
   description: "Review files using the workflow reviewer (batched for large PRs)",
   inputSchema: categorizedSchema,
   outputSchema: reviewedSchema,
-  execute: async ({ inputData, mastra, requestContext }) => {
+  execute: async ({ inputData, mastra, requestContext, writer }) => {
     const { owner, repo, pullNumber, pr, reviewableFiles, skippedFiles } = inputData;
     const agent = mastra.getAgentById("workflow-review-agent");
 
@@ -231,9 +237,20 @@ const reviewFiles = createStep({
       : reviewableFiles.map((f) => ({ ...f, content: "" }));
 
     const batches = batchFiles(entries, includeContent);
+    await emitProgress(writer, owner, repo, pullNumber, {
+      type: "analysis",
+      message: `Reviewing ${entries.length} files in ${batches.length} batch(es) (${reviewDepth.split(" — ")[0]})`,
+    });
 
     // Batches are independent — always run in parallel. (Sequential only
     // throttles wall-clock; rate limits are guarded by the queue limiter.)
+    const MAX_STREAMED_FINDINGS = 30;
+    let streamedFindings = 0;
+    let midpointNoted = false;
+
+    function findingSeverity(s: string): "info" | "warning" | "error" {
+      return s === "critical" ? "error" : s === "warning" ? "warning" : "info";
+    }
 
     function buildPrompt(batch: FileEntry[], batchIndex: number): string {
       const label =
@@ -275,7 +292,35 @@ For EACH file, return an entry with the filename and an array of issues found (e
     }
 
     let allReviews: z.infer<typeof fileReviewSchema>[];
-    const results = await Promise.all(batches.map((batch, i) => reviewBatch(batch, i)));
+    const results = await Promise.all(
+      batches.map(async (batch, i) => {
+        for (const f of batch) {
+          await emitProgress(writer, owner, repo, pullNumber, { type: "file", path: f.filename });
+        }
+        const reviews = await reviewBatch(batch, i);
+        for (const fr of reviews) {
+          for (const issue of fr.issues) {
+            if (streamedFindings >= MAX_STREAMED_FINDINGS) break;
+            streamedFindings++;
+            await emitProgress(writer, owner, repo, pullNumber, {
+              type: "finding",
+              severity: findingSeverity(issue.severity),
+              message: `${fr.filename}${issue.line ? `:${issue.line}` : ""} — ${issue.message}`,
+            });
+          }
+        }
+        // One GitHub placeholder refresh per run (after the first batch lands).
+        if (!midpointNoted) {
+          midpointNoted = true;
+          const done = batch.length;
+          await updateProgressComment(
+            octokit, owner, repo, pullNumber, pr.headSha,
+            `🔍 **CodeSheriff** reviewing… (${done}/${entries.length} files scanned, ${streamedFindings} findings so far)`
+          );
+        }
+        return reviews;
+      })
+    );
     allReviews = results.flat();
 
     return { owner, repo, pullNumber, pr, fileReviews: allReviews, skippedFiles };
@@ -287,7 +332,7 @@ const aggregateFindings = createStep({
   description: "Synthesize per-file reviews into a cohesive PR review summary",
   inputSchema: reviewedSchema,
   outputSchema: aggregatedSchema,
-  execute: async ({ inputData, mastra }) => {
+  execute: async ({ inputData, mastra, writer }) => {
     const { owner, repo, pullNumber, pr, fileReviews, skippedFiles } = inputData;
     const agent = mastra.getAgentById("workflow-review-agent");
 
@@ -355,6 +400,11 @@ Rules:
       prMemory(owner, repo, pullNumber)
     );
 
+    await emitProgress(writer, owner, repo, pullNumber, {
+      type: "analysis",
+      message: `Synthesis complete: ${summary.qualityScore}/10 ${summary.verdict}`,
+    });
+
     return { owner, repo, pullNumber, pr, ...summary, fileReviews, skippedFiles };
   },
 });
@@ -364,7 +414,7 @@ const postReview = createStep({
   description: "Post summary + inline review to GitHub via Reviews API (COMMENT only for v1)",
   inputSchema: aggregatedSchema,
   outputSchema: finalOutputSchema,
-  execute: async ({ inputData, requestContext, mastra }) => {
+  execute: async ({ inputData, requestContext, mastra, writer }) => {
     const logger = mastra?.getLogger?.() ?? console;
     const { owner, repo, pullNumber, pr, fileReviews, skippedFiles, ...summary } = inputData as any;
 
@@ -372,6 +422,10 @@ const postReview = createStep({
     const action = (requestContext?.get?.("action") as string | undefined) ?? "manual";
     if (action === "manual") {
       logger.info?.(`[post-review] dry-run repo=${owner}/${repo} pr=${pullNumber} (no webhook action)`);
+      await emitProgress(writer, owner, repo, pullNumber, {
+        type: "completed",
+        summary: `(dry run) ${String(summary.summary ?? "").slice(0, 500)}`,
+      });
       return {
         ...summary, fileReviews, skippedFiles,
         posted: { posted: false, reviewId: null, mode: "dry-run", inlineCount: 0 },
@@ -388,10 +442,18 @@ const postReview = createStep({
         positiveNotes: summary.positiveNotes, skippedFiles, fileReviews,
       });
       logger.info?.(`[post-review] posted repo=${owner}/${repo} pr=${pullNumber} review=${result.reviewId} mode=${result.mode} inline=${result.inlineCount}`);
+      await emitProgress(writer, owner, repo, pullNumber, {
+        type: "completed",
+        summary: `${summary.verdict} ${summary.qualityScore}/10 — review ${result.reviewId} posted (${result.mode}, ${result.inlineCount} inline)`,
+      });
       return { ...summary, fileReviews, skippedFiles, posted: result };
     } catch (err: any) {
       // Never fail the workflow on posting errors — review data is still returned.
       logger.error?.(`[post-review] failed repo=${owner}/${repo} pr=${pullNumber}: ${err?.message ?? err}`);
+      await emitProgress(writer, owner, repo, pullNumber, {
+        type: "completed",
+        summary: `Posting failed (${err?.message ?? err}); review data retained`,
+      });
       return {
         ...summary, fileReviews, skippedFiles,
         posted: { posted: false, reviewId: null, mode: "failed", inlineCount: 0 },
