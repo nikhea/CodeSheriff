@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   codeStandardsSkill,
   securityReviewSkill,
@@ -11,7 +12,9 @@ import {
  * inlined createSkill() copies the agent actually loads.
  * Usage: bun run check:skills (non-zero exit on drift)
  */
-const SKILLS_ROOT = resolve(import.meta.dirname, "../src/mastra/skills");
+// Portable in Bun + Node (import.meta.dirname is Bun/Node20.11+ only).
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SKILLS_ROOT = resolve(HERE, "../src/mastra/skills");
 
 function readSkillFile(path: string): string | null {
   try {

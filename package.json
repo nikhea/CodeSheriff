@@ -21,7 +21,8 @@
     "build": "mastra build",
     "start": "mastra start",
     "worker": "bun src/mastra/queue/worker.ts",
-    "check:skills": "bun scripts/check-skills-sync.ts"
+    "check:skills": "bun scripts/check-skills-sync.ts",
+    "migrate:memory": "bun scripts/migrate-working-memory.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.73.0",
