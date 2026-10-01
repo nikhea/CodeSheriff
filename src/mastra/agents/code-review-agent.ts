@@ -1,5 +1,5 @@
 import { Agent } from "@mastra/core/agent";
-import { skillPath } from "../lib/skill-paths";
+import { codeStandardsSkill, securityReviewSkill, performanceReviewSkill } from "../skills/review-skills";
 import {
   parseGitHubPRUrl,
   getPullRequest,
@@ -107,10 +107,6 @@ Good patterns worth acknowledging.`,
     getFileContent,
     postPRReview,
   },
-  skills: [
-    skillPath("code-standards"),
-    skillPath("security-review"),
-    skillPath("performance-review"),
-  ],
+  skills: [codeStandardsSkill, securityReviewSkill, performanceReviewSkill],
   memory: rallyaMemory,
 });
