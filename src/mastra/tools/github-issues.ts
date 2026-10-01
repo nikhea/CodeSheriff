@@ -110,21 +110,30 @@ export const postIssueComment = createTool({
   },
 });
 
+const ALIGNMENT_LABELS = ["triaged-aligned", "triaged-misaligned", "triaged-unclear"] as const;
+const TYPE_LABELS = ["bug", "enhancement", "question", "chore"] as const;
+
 export const setIssueLabels = createTool({
   id: "set-issue-labels",
   description:
-    "Replace an issue's labels via Octokit. Use alignment labels (e.g. triaged-aligned, triaged-misaligned) plus a type label (bug, enhancement, question, chore). Creates repo labels implicitly.",
+    "Label the issue with exactly one alignment label and one type label. The tool fetches current labels, drops stale triaged-*/type labels, and merges server-side — the caller never assembles label arrays, so label spam is impossible.",
   inputSchema: issueIdentifierSchema.extend({
-    labels: z.array(z.string()).describe("Full desired label set for the issue."),
+    alignment: z.enum(ALIGNMENT_LABELS).describe("Exactly one alignment verdict."),
+    typeLabel: z.enum(TYPE_LABELS).describe("Exactly one issue type."),
   }),
   outputSchema: z.object({ labels: z.array(z.string()) }),
   execute: async (inputData, context) => {
     const octokit = await resolveOctokit(context);
+    const { owner, repo, issueNumber, alignment, typeLabel } = inputData;
+    const { data: current } = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/labels", {
+      owner, repo, issue_number: issueNumber,
+    });
+    const kept = ((current ?? []) as any[])
+      .map((l) => (typeof l === "string" ? l : l.name))
+      .filter((name: string) => !ALIGNMENT_LABELS.includes(name as any) && !TYPE_LABELS.includes(name as any));
+    const labels = [...kept, alignment, typeLabel];
     const { data } = await octokit.request("PUT /repos/{owner}/{repo}/issues/{issue_number}/labels", {
-      owner: inputData.owner,
-      repo: inputData.repo,
-      issue_number: inputData.issueNumber,
-      labels: inputData.labels,
+      owner, repo, issue_number: issueNumber, labels,
     });
     return { labels: ((data ?? []) as any[]).map((l) => (typeof l === "string" ? l : l.name)) };
   },

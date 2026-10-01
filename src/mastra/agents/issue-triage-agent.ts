@@ -2,6 +2,7 @@ import { Agent } from "@mastra/core/agent";
 import { getFileContent } from "../tools/github-pr";
 import { getIssue, getRepository, postIssueComment, setIssueLabels } from "../tools/github-issues";
 import { issueTriageSkill, visionAlignmentSkill } from "../skills/triage-skills";
+import { rallyaMemory } from "../utils/memory";
 
 /**
  * Triage agent for newly opened GitHub issues.
@@ -9,8 +10,10 @@ import { issueTriageSkill, visionAlignmentSkill } from "../skills/triage-skills"
  * - Verifies the issue (bug / feature / question / chore) against what the
  *   repo is actually building (description + topics + README, all fetched
  *   live — never assumed), then posts a verdict comment and labels.
- * - No memory: triage is stateless per issue. No channels: driven by the
- *   issues webhook → queue → worker path.
+ * - Shared rallyaMemory: thread per issue for run history, resource per
+ *   repo so triage verdicts feed the same repo profile (past-verdict
+ *   calibration) the reviewers read. No channels: driven by the issues
+ *   webhook → queue → worker path.
  */
 export const issueTriageAgent = new Agent({
   id: "issue-triage-agent",
@@ -47,9 +50,10 @@ Given owner/repo/issueNumber:
 6. MANDATORY FINAL STEPS (in order):
    - Call \`postIssueComment\` exactly once with the verdict. The posted
      comment IS the deliverable — never end with a question instead of posting.
-   - Call \`setIssueLabels\` once: keep existing labels, add one alignment
-     label (\`triaged-aligned\` / \`triaged-misaligned\` / \`triaged-unclear\`)
-     and one type label (\`bug\` / \`enhancement\` / \`question\` / \`chore\`).
+     Render all tool results as prose; never paste raw objects or JSON into
+     the body.
+   - Call \`setIssueLabels\` once with exactly one \`alignment\` and one
+     \`typeLabel\`. The tool merges them with existing labels server-side.
    - Reply with one line confirming the posted comment id.
 
 ## Skills — LOAD AND APPLY BOTH
@@ -97,6 +101,7 @@ What happens now (e.g. "ready to pick up", "needs reporter specifics:",
     setIssueLabels,
   },
   skills: [issueTriageSkill, visionAlignmentSkill],
+  memory: rallyaMemory,
   defaultOptions: {
     maxSteps: 30,
   },
