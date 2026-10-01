@@ -18,6 +18,7 @@ import {
   MEDIUM_PR_MAX,
 } from "../lib/review-config";
 import { rallyaMemory } from "../utils/memory";
+import { githubChannelAdapter, getChannelInstallationId } from "../lib/github-channel";
 
 export const codeReviewAgent = new Agent({
   id: "code-review-agent",
@@ -48,6 +49,27 @@ When given a GitHub PR URL:
    - Do NOT ask the user for confirmation, approval, or any question. Never end your turn with a question.
    - Do NOT show the review in chat instead of posting. The posted GitHub review IS the deliverable.
    - Call \`postPRReview\` exactly once per PR, then reply with one line confirming the posted review id.
+
+## Grounding — DO NOT FABRICATE (violations fail the review)
+
+Every claim must trace to tool output observed IN THIS RUN:
+
+1. **Fetch before you flag.** A file can carry critical/warning findings ONLY
+   if you actually read it via \`getPullRequestFiles\` (patch),
+   \`getPullRequestDiff\`, or \`getFileContent\` in this run. Skipped fetching
+   a file → no findings above suggestion severity for it, ever.
+2. **Cite only observed lines.** Use ONLY line numbers visible in a fetched
+   diff hunk or file content. Never recall, estimate, or round line numbers;
+   never cite a line from the PR description or a prior review. If you cannot
+   point to the hunk, do not file the finding.
+3. **Never invent code.** No function/variable names, file contents, or
+   configs from memory. If context is missing, fetch it; if the fetch fails,
+   say so explicitly and downgrade or drop the claim.
+4. **Scope to what you saw.** Review ONLY files returned by the tools in this
+   run. Do not restate findings from other reviews or assume unreviewed code.
+5. **Inline comments MUST anchor to fetched +/- diff hunks.** GitHub
+   422-rejects anything else — treat every omitted inline as proof of an
+   ungrounded claim, and do not re-file it without fetching the hunk first.
 
 ## Skills — LOAD AND APPLY ALL THREE
 
@@ -103,7 +125,29 @@ Else "No performance concerns identified."
 Naming, refactor, tests, docs.
 
 ### Positive Notes ✅
-Good patterns worth acknowledging.`,
+Good patterns worth acknowledging.
+
+## GitHub @mention replies (channel threads)
+
+You are also reachable via @mentions in PR / issue comment threads
+(issue_comment + pull_request_review_comment webhooks). Thread replies post
+as plain comments via the channel adapter — they are NOT structured Reviews.
+
+- **Scope:** only review-related mentions (re-review, explain a finding,
+  why a change was flagged, suggest a fix, check a push). For anything
+  unrelated, reply one line declining and do nothing else.
+- **Default:** answer directly in the thread. Use the Octokit read tools
+  (getPullRequest, getPullRequestFiles, getFileContent, getPullRequestDiff)
+  to fetch fresh context; the channel handler already bridges
+  installationId into requestContext for you.
+- **postPRReview:** call it ONLY when the user explicitly asks for a full
+  re-review or formal review to be posted. Never call it for Q&A/explain
+  turns — that would spam structured reviews.
+- **Loops:** never reply to your own bot messages or to other bots.
+- Keep thread replies concise with file:line refs; link back to the posted
+  structured review when relevant.
+- Grounding rules above apply in threads too: no fetched hunk → no
+  file:line claim, and never invent code to answer a question.`,
   tools: {
     parseGitHubPRUrl,
     getPullRequest,
@@ -114,6 +158,43 @@ Good patterns worth acknowledging.`,
   },
   skills: [codeStandardsSkill, securityReviewSkill, performanceReviewSkill],
   memory: rallyaMemory,
+  channels: {
+    adapters: {
+      // Mention replies land on the auto-mounted route
+      // /api/agents/code-review-agent/channels/github/webhook.
+      // Tool calls stay silent in PR threads (plain-text replies only).
+      github: { adapter: githubChannelAdapter, toolDisplay: "hidden" },
+    },
+    handlers: {
+      // Bridge installationId so Octokit tools work in channel threads.
+      // The adapter resolves it per-installation (multi-tenant); without it
+      // the tools fall back to GITHUB_INSTALLATION_ID and fail on webhooks.
+      onMention: async (thread, message, defaultHandler, ctx) => {
+        try {
+          if ((message as any)?.author?.isBot === true) return;
+          const installationId = await getChannelInstallationId(thread as any);
+          if (installationId !== undefined) {
+            ctx.requestContext.set("installationId" as any, installationId);
+          }
+        } catch {
+          // Non-fatal: default handler + tools surface a clear error.
+        }
+        await defaultHandler(thread, message);
+      },
+      onSubscribedMessage: async (thread, message, defaultHandler, ctx) => {
+        try {
+          if ((message as any)?.author?.isBot === true) return;
+          const installationId = await getChannelInstallationId(thread as any);
+          if (installationId !== undefined) {
+            ctx.requestContext.set("installationId" as any, installationId);
+          }
+        } catch {
+          // Non-fatal: default handler + tools surface a clear error.
+        }
+        await defaultHandler(thread, message);
+      },
+    },
+  },
   defaultOptions: {
     maxSteps: 30,
   },

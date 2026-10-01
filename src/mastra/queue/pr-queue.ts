@@ -1,6 +1,6 @@
 import { Queue, Worker, type Job } from "bullmq";
-import IORedis from "ioredis";
 import { RequestContext } from "@mastra/core/request-context";
+import { getRedisConnection } from "../lib/redis";
 import { postFailedComment } from "../lib/github-post";
 
 export interface PRReviewJobData {
@@ -14,21 +14,7 @@ export interface PRReviewJobData {
 
 const QUEUE_NAME = "pr-review";
 
-let redis: IORedis | null = null;
 let queue: Queue<PRReviewJobData> | null = null;
-
-function redisUrl(): string {
-  return process.env.REDIS_URL ?? "redis://localhost:6379";
-}
-
-/** Shared Redis connection (BullMQ requires maxRetriesPerRequest: null). */
-export function getRedisConnection(): IORedis {
-  if (!redis) {
-    redis = new IORedis(redisUrl(), { maxRetriesPerRequest: null });
-    redis.on("error", (err) => console.error("[pr-queue] redis error", err?.message ?? err));
-  }
-  return redis;
-}
 
 export function getPRQueue(): Queue<PRReviewJobData> {
   if (!queue) {

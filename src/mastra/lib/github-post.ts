@@ -1,4 +1,5 @@
 import { getInstallationOctokit } from "./github-app";
+import { getReviewDepth } from "./review-config";
 /** Marker embedded in review bodies for dedupe/tracing. */
 export function reviewMarker(sha: string): string {
   return `<!-- codesheriff-review ${sha} -->`;
@@ -62,8 +63,33 @@ export async function deleteProgressComment(input: ProgressInput): Promise<boole
   }
 }
 
-/** Leave a failure note so a stuck "started" placeholder isn't the last word. Best-effort. */
-export async function postFailedComment(input: ProgressInput): Promise<void> {
+/** Refresh the placeholder mid-run (called once per run). Best-effort, never throws. */
+export async function updateProgressComment(
+  octokit: any,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  headSha: string,
+  line: string
+): Promise<void> {
+  try {
+    const { data } = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+      owner, repo, issue_number: pullNumber, per_page: 100,
+    });
+    const hit = (data as any[]).find(
+      (c) => typeof c?.body === "string" && c.body.includes(progressMarker(headSha))
+    );
+    if (!hit) return;
+    await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
+      owner, repo, comment_id: hit.id,
+      body: `${line}\n\n${progressMarker(headSha)}`,
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Leave a failure note so a stuck "started" placeholder isn't the last word. Best-effort. */export async function postFailedComment(input: ProgressInput): Promise<void> {
   try {
     const octokit = await getInstallationOctokit(input.installationId);
     await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
@@ -102,19 +128,26 @@ export interface PostReviewInput {
   suggestions: string[];
   positiveNotes: string[];
   skippedFiles: string[];
+  attemptedFiles: string[];
   fileReviews: Array<{
     filename: string;
     issues: Array<{ severity: string; category: string; line?: string; message: string }>;
   }>;
 }
 
-function buildBody(input: PostReviewInput, mode: string): string {
+export function buildBody(input: PostReviewInput, mode: string): string {
+  const reviewed = input.fileReviews.map((f) => f.filename);
+  const reviewedSet = new Set(reviewed);
+  const failed = (input.attemptedFiles ?? []).filter((f) => !reviewedSet.has(f));
+  const depth = getReviewDepth(reviewed.length).split(" — ")[0];
   const lines = [
     `## CodeSheriff Review ${mode === "summary-only" ? "(update)" : ""}`.trim(),
     ``,
     input.summary,
     ``,
     `**Score:** ${input.qualityScore}/10 — **${input.verdict}** (v1 posts COMMENT only, non-blocking)`,
+    ``,
+    `**Coverage:** ${reviewed.length} file(s) reviewed (${depth} depth)${failed.length ? `, ${failed.length} failed to review` : ""}`,
     ``,
   ];
   const section = (title: string, items: string[]) => {
@@ -128,6 +161,12 @@ function buildBody(input: PostReviewInput, mode: string): string {
   section("Positive Notes ✅", input.positiveNotes);
   if (input.skippedFiles.length) {
     lines.push(`<details><summary>Skipped files (${input.skippedFiles.length})</summary>`, ``, input.skippedFiles.map((f) => `- \`${f}\``).join("\n"), `</details>`, ``);
+  }
+  if (reviewed.length) {
+    lines.push(`<details><summary>Reviewed files (${reviewed.length})</summary>`, ``, reviewed.map((f) => `- \`${f}\``).join("\n"), `</details>`, ``);
+  }
+  if (failed.length) {
+    lines.push(`<details><summary>Failed to review (${failed.length}) — re-push to retry</summary>`, ``, failed.map((f) => `- \`${f}\``).join("\n"), `</details>`, ``);
   }
   lines.push(reviewMarker(input.headSha));
   return lines.join("\n");
