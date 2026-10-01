@@ -1,5 +1,4 @@
 import { Agent } from "@mastra/core/agent";
-import { Memory } from "@mastra/memory";
 import {
   parseGitHubPRUrl,
   getPullRequest,
@@ -7,7 +6,12 @@ import {
   getPullRequestFiles,
   getFileContent,
 } from "../tools/github-pr";
-import { REVIEW_DEPTH_INSTRUCTIONS, SMALL_PR_MAX, MEDIUM_PR_MAX } from "../lib/review-config";
+import {
+  REVIEW_DEPTH_INSTRUCTIONS,
+  SMALL_PR_MAX,
+  MEDIUM_PR_MAX,
+} from "../lib/review-config";
+import { rallyaMemory } from "../utils/memory";
 
 export const codeReviewAgent = new Agent({
   id: "code-review-agent",
@@ -93,11 +97,5 @@ Good patterns worth acknowledging.`,
     "./src/mastra/skills/security-review",
     "./src/mastra/skills/performance-review",
   ],
-  memory: new Memory({
-    options: {
-      observationalMemory: {
-        model: "openai/gpt-4o-mini",
-      },
-    },
-  }),
+  memory: rallyaMemory,
 });
