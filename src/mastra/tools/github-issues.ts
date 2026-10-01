@@ -140,6 +140,42 @@ export const postIssueComment = createTool({
   },
 });
 
+export const getIssueComments = createTool({
+  id: "get-issue-comments",
+  description:
+    "List recent comments on an issue (newest last) for follow-up context. Bodies are capped to bound context — fetch nothing else for history.",
+  inputSchema: issueIdentifierSchema.extend({
+    limit: z.number().optional().default(20).describe("Max comments to return (newest)."),
+  }),
+  outputSchema: z.object({
+    comments: z.array(
+      z.object({
+        id: z.number(),
+        author: z.string(),
+        body: z.string(),
+        createdAt: z.string(),
+      })
+    ),
+  }),
+  execute: async (inputData, context) => {
+    const octokit = await resolveOctokit(context);
+    const ref = `${inputData.owner}/${inputData.repo}#${inputData.issueNumber}`;
+    const { data } = await gh(
+      octokit,
+      "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+      { owner: inputData.owner, repo: inputData.repo, issue_number: inputData.issueNumber, per_page: 100 },
+      ref
+    );
+    const all = ((data ?? []) as any[]).map((c) => ({
+      id: c.id as number,
+      author: c.user?.login ?? "ghost",
+      body: String(c.body ?? "").slice(0, 2000),
+      createdAt: c.created_at as string,
+    }));
+    return { comments: all.slice(-Math.max(1, inputData.limit ?? 20)) };
+  },
+});
+
 const ALIGNMENT_LABELS = ["triaged-aligned", "triaged-misaligned", "triaged-unclear"] as const;
 const TYPE_LABELS = ["bug", "enhancement", "question", "chore"] as const;
 

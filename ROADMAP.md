@@ -68,10 +68,14 @@ Instructions: review-related mentions only. Structured reviews stay on the
 Octokit Reviews path (adapter posts plain comments).
 Verify: `@xcodesheriff-bot re-review` on a test PR → thread reply; no loops.
 
-### Phase N4 — Lifecycle follow-ups (deferred, hand-rolled)
-`issue_comment` (human replied → follow-up pass with comment context),
-`closed/merged` (cleanup: drop queued jobs for that SHA). GithubSignals
-provider stays deferred (needs gitcrawl+gh+sqlite3, 5-min poll, beta API).
+### Phase N4 — Lifecycle follow-ups (shipped webhook-driven, no provider)
+`issue_comment` created (human → follow-up pass with comment context via
+`getIssueComments`; full triage when never triaged), `issues.closed`
+(drops queued triage/follow-up jobs), `issues.reopened` (re-triage),
+`pull_request.closed` (drops queued review job). Triage streams
+stage/tool/text events to `GET /triage/progress/:owner/:repo/:issue` (SSE,
+Redis-backed, mirrors review progress). GithubSignals provider stays
+deferred (needs gitcrawl+gh+sqlite3, 5-min poll, beta API).
 
 ## Execution order
 

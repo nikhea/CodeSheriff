@@ -1,6 +1,6 @@
 import { Agent } from "@mastra/core/agent";
 import { getFileContent } from "../tools/github-pr";
-import { getIssue, getRepository, postIssueComment, setIssueLabels } from "../tools/github-issues";
+import { getIssue, getRepository, getIssueComments, postIssueComment, setIssueLabels } from "../tools/github-issues";
 import { issueTriageSkill, visionAlignmentSkill } from "../skills/triage-skills";
 import { rallyaMemory } from "../utils/memory";
 
@@ -99,6 +99,7 @@ What happens now (e.g. "ready to pick up", "needs reporter specifics:",
   tools: {
     getIssue,
     getRepository,
+    getIssueComments,
     getFileContent,
     postIssueComment,
     setIssueLabels,

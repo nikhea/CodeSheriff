@@ -23,6 +23,7 @@ import {
 } from "./scorers/weather-scorer";
 import { githubWebhookRoute } from "./routes/github-webhook";
 import { reviewProgressRoute } from "./routes/review-progress";
+import { triageProgressRoute } from "./routes/triage-progress";
 import { logEnvStatus } from "./lib/env";
 
 logEnvStatus(console);
@@ -43,7 +44,7 @@ export const mastra = new Mastra({
     keyPrefix: "mastra:codesheriff",
   }),
   server: {
-    apiRoutes: [githubWebhookRoute, reviewProgressRoute],
+    apiRoutes: [githubWebhookRoute, reviewProgressRoute, triageProgressRoute],
   },
   storage: new MastraCompositeStore({
     id: "composite-storage",
