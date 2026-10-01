@@ -6,6 +6,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/node": "^26.6.3",
+    "concurrently": "^10.0.5",
     "mastra": "^1.32.0"
   },
   "peerDependencies": {
@@ -16,8 +17,10 @@
   },
   "scripts": {
     "dev": "mastra dev",
+    "dev:all": "concurrently -n server,worker -c blue,green \"bun run dev\" \"bun run worker\" --kill-others",
     "build": "mastra build",
-    "start": "mastra start"
+    "start": "mastra start",
+    "worker": "bun src/mastra/queue/worker.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.73.0",

@@ -6,13 +6,23 @@ import { DuckDBStore } from "@mastra/duckdb";
 import { MastraCompositeStore } from '@mastra/core/storage';
 import { Observability, MastraStorageExporter, MastraPlatformExporter, SensitiveDataFilter } from '@mastra/observability';
 import { weatherWorkflow } from './workflows/weather-workflow';
+import { prReviewWorkflow } from './workflows/pr-review-workflow';
 import { weatherAgent } from './agents/weather-agent';
+import { codeReviewAgent } from './agents/code-review-agent';
+import { workflowReviewAgent } from './agents/workflow-review-agent';
 import { toolCallAppropriatenessScorer, completenessScorer, translationScorer } from './scorers/weather-scorer';
+import { githubWebhookRoute } from './routes/github-webhook';
+import { logEnvStatus } from './lib/env';
+
+logEnvStatus(console);
 
 export const mastra = new Mastra({
-  workflows: { weatherWorkflow },
-  agents: { weatherAgent },
+  workflows: { weatherWorkflow, prReviewWorkflow },
+  agents: { weatherAgent, codeReviewAgent, workflowReviewAgent },
   scorers: { toolCallAppropriatenessScorer, completenessScorer, translationScorer },
+  server: {
+    // apiRoutes: [githubWebhookRoute],
+  },
   storage: new MastraCompositeStore({
     id: 'composite-storage',
     default: new LibSQLStore({
