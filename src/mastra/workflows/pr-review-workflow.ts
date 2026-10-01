@@ -333,7 +333,19 @@ Rules:
         positiveNotes: [],
       },
       "aggregate-findings",
-      mastra?.getLogger?.()
+      mastra?.getLogger?.(),
+      // If the model answered in prose, post the prose as the summary
+      // rather than "Review could not be generated."
+      (prose) => ({
+        summary: prose.slice(0, 4000),
+        qualityScore: 7,
+        verdict: "COMMENT" as const,
+        criticalIssues: [],
+        securityConcerns: [],
+        performanceNotes: [],
+        suggestions: [],
+        positiveNotes: [],
+      })
     );
 
     return { owner, repo, pullNumber, pr, ...summary, fileReviews, skippedFiles };
