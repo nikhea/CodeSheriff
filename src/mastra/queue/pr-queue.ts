@@ -23,11 +23,25 @@ export function getPRQueue(): Queue<PRReviewJobData> {
   return queue;
 }
 
-export function prJobId(d: PRReviewJobData): string {
+export function prJobId(d: Pick<PRReviewJobData, "owner" | "repo" | "pullNumber"> & { headSha?: string }): string {
   const sha = (d.headSha ?? "no-sha").slice(0, 12);
   return `pr-${d.owner}-${d.repo}-${d.pullNumber}-${sha}`;
 }
 
+/** Best-effort: drop a queued (not yet running) PR review job, e.g. on PR close. */
+export async function dropPRJob(jobId: string): Promise<boolean> {
+  try {
+    const q = getPRQueue();
+    const job = await q.getJob(jobId);
+    if (!job) return false;
+    const state = await job.getState();
+    if (state !== "waiting" && state !== "delayed" && state !== "prioritized") return false;
+    await job.remove();
+    return true;
+  } catch {
+    return false;
+  }
+}
 /** Enqueue a review. BullMQ dedupes by jobId (same PR+SHA = one job). */
 export async function enqueuePRReview(data: PRReviewJobData) {
   const q = getPRQueue();

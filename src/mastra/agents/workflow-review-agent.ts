@@ -5,6 +5,7 @@ import {
   securityReviewSkill,
 } from "../skills/review-skills";
 import { REVIEW_DEPTH_INSTRUCTIONS } from "../lib/review-config";
+import { rallyaMemory } from "../utils/memory";
 
 /**
  * Workflow reviewer used exclusively by the PR review workflow.
@@ -74,6 +75,7 @@ ${REVIEW_DEPTH_INSTRUCTIONS}
 
 Also apply the repo's code-standards, security-review, and performance-review skills.`,
   skills: [codeStandardsSkill, securityReviewSkill, performanceReviewSkill],
+  memory: rallyaMemory,
   defaultOptions: {
     maxSteps: 30,
   },
