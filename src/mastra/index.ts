@@ -1,4 +1,5 @@
 import { Mastra } from "@mastra/core/mastra";
+import { RedisStreamsPubSub } from "@mastra/redis-streams";
 import { PinoLogger } from "@mastra/loggers";
 import { LibSQLStore } from "@mastra/libsql";
 import { DuckDBStore } from "@mastra/duckdb";
@@ -33,6 +34,13 @@ export const mastra = new Mastra({
     completenessScorer,
     translationScorer,
   },
+  // Shared pub/sub so signals, leases, and channel threads coordinate across
+  // the dev-server and worker processes (in-memory can't cross processes).
+  // Local Redis 6.0.16 works for dev; use 6.2+ (or managed Redis) in prod.
+  pubsub: new RedisStreamsPubSub({
+    url: process.env.REDIS_URL ?? "redis://localhost:6379",
+    keyPrefix: "mastra:codesheriff",
+  }),
   server: {
     apiRoutes: [githubWebhookRoute, reviewProgressRoute],
   },
