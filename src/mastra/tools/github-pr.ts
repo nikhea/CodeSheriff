@@ -131,6 +131,55 @@ export const getPullRequestFiles = createTool({
   },
 });
 
+export const postPRReview = createTool({
+  id: "post-pr-review",
+  description:
+    "Post a review on a PR via Octokit Reviews API: summary body plus optional inline comments. Always uses event COMMENT (non-blocking) for v1. At most 10 inline comments are kept; extras are dropped.",
+  inputSchema: prIdentifierSchema.extend({
+    headSha: z.string().describe("Head commit SHA the review applies to (from getPullRequest)."),
+    body: z.string().describe("Summary markdown. Include a `file:line`-style breakdown; inline comments carry the details."),
+    comments: z
+      .array(
+        z.object({
+          path: z.string().describe("File path in repo"),
+          line: z.number().int().positive().describe("New-file line number from the diff hunk"),
+          body: z.string().describe("Inline feedback markdown"),
+        })
+      )
+      .optional()
+      .default([])
+      .describe("Inline comments. Lines must come from +/- diff hunks or GitHub returns 422."),
+  }),
+  outputSchema: z.object({
+    reviewId: z.number().nullable(),
+    mode: z.string(),
+    inlineCount: z.number(),
+  }),
+  execute: async (inputData, context) => {
+    const octokit = await resolveOctokit(context);
+    const { owner, repo, pullNumber, headSha, body } = inputData;
+    const comments = (inputData.comments ?? []).slice(0, 10).map((c) => ({ ...c, side: "RIGHT" as const }));
+
+    const attempt = (cs: typeof comments, note?: string) =>
+      octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
+        owner, repo, pull_number: pullNumber, commit_id: headSha, event: "COMMENT",
+        body: note ? `${body}\n\n> Note: ${note}` : body,
+        comments: cs as any,
+      });
+
+    try {
+      const { data } = await attempt(comments);
+      return { reviewId: (data as any)?.id ?? null, mode: comments.length ? "full" : "summary-only", inlineCount: comments.length };
+    } catch (err: any) {
+      if (err?.status === 422 && comments.length > 0) {
+        const { data } = await attempt([], `${comments.length} inline comment(s) omitted (lines not in diff).`);
+        return { reviewId: (data as any)?.id ?? null, mode: "summary-only", inlineCount: 0 };
+      }
+      throw err;
+    }
+  },
+});
+
 export const getFileContent = createTool({
   id: "get-file-content",
   description:
