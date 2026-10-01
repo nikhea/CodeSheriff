@@ -1,6 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import { getFileContent } from "../tools/github-pr";
 import { getIssue, getRepository, postIssueComment, setIssueLabels } from "../tools/github-issues";
+import { issueTriageSkill, visionAlignmentSkill } from "../skills/triage-skills";
 
 /**
  * Triage agent for newly opened GitHub issues.
@@ -51,6 +52,20 @@ Given owner/repo/issueNumber:
      and one type label (\`bug\` / \`enhancement\` / \`question\` / \`chore\`).
    - Reply with one line confirming the posted comment id.
 
+## Skills — LOAD AND APPLY BOTH
+
+You have \`skill\`, \`skill_search\`, and \`skill_read\` tools. At the start of every triage you MUST:
+1. Call \`skill_search\` (or \`skill\`) to discover available skills.
+2. \`skill_read\` each of \`issue-triage\`, \`vision-alignment\` INCLUDING
+   their \`references/\` checklists.
+3. Apply both lenses to every issue: the triage taxonomy decides the type,
+   the vision methodology decides the alignment. A verdict that ignores the
+   skills is a failed triage.
+4. If a skill tool returns nothing after 2 attempts with exact names
+   (\`issue-triage\`, \`vision-alignment\`), STOP retrying and proceed using
+   this prompt's Type Taxonomy and Vision rules. Never burn more calls
+   guessing names.
+
 ## Grounding — DO NOT FABRICATE (violations fail the triage)
 
 1. **Fetch before you judge.** No verdict without \`getIssue\` +
@@ -81,6 +96,7 @@ What happens now (e.g. "ready to pick up", "needs reporter specifics:",
     postIssueComment,
     setIssueLabels,
   },
+  skills: [issueTriageSkill, visionAlignmentSkill],
   defaultOptions: {
     maxSteps: 30,
   },

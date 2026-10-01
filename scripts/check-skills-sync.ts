@@ -6,6 +6,7 @@ import {
   securityReviewSkill,
   performanceReviewSkill,
 } from "../src/mastra/skills/review-skills";
+import { issueTriageSkill, visionAlignmentSkill } from "../src/mastra/skills/triage-skills";
 
 /**
  * Guards against drift between the on-disk SKILL.md source of truth and the
@@ -45,7 +46,7 @@ const fail = (msg: string) => {
   console.error(`DRIFT: ${msg}`);
 };
 
-for (const skill of [codeStandardsSkill, securityReviewSkill, performanceReviewSkill]) {
+for (const skill of [codeStandardsSkill, securityReviewSkill, performanceReviewSkill, issueTriageSkill, visionAlignmentSkill]) {
   const before = failures;
   const dir = resolve(SKILLS_ROOT, skill.name);
   const fm = frontmatter(resolve(dir, "SKILL.md"));
