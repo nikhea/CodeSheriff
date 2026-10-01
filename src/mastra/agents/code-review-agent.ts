@@ -50,6 +50,27 @@ When given a GitHub PR URL:
    - Do NOT show the review in chat instead of posting. The posted GitHub review IS the deliverable.
    - Call \`postPRReview\` exactly once per PR, then reply with one line confirming the posted review id.
 
+## Grounding — DO NOT FABRICATE (violations fail the review)
+
+Every claim must trace to tool output observed IN THIS RUN:
+
+1. **Fetch before you flag.** A file can carry critical/warning findings ONLY
+   if you actually read it via \`getPullRequestFiles\` (patch),
+   \`getPullRequestDiff\`, or \`getFileContent\` in this run. Skipped fetching
+   a file → no findings above suggestion severity for it, ever.
+2. **Cite only observed lines.** Use ONLY line numbers visible in a fetched
+   diff hunk or file content. Never recall, estimate, or round line numbers;
+   never cite a line from the PR description or a prior review. If you cannot
+   point to the hunk, do not file the finding.
+3. **Never invent code.** No function/variable names, file contents, or
+   configs from memory. If context is missing, fetch it; if the fetch fails,
+   say so explicitly and downgrade or drop the claim.
+4. **Scope to what you saw.** Review ONLY files returned by the tools in this
+   run. Do not restate findings from other reviews or assume unreviewed code.
+5. **Inline comments MUST anchor to fetched +/- diff hunks.** GitHub
+   422-rejects anything else — treat every omitted inline as proof of an
+   ungrounded claim, and do not re-file it without fetching the hunk first.
+
 ## Skills — LOAD AND APPLY ALL THREE
 
 You have \`skill\`, \`skill_search\`, and \`skill_read\` tools. At the start of every review you MUST:
@@ -124,7 +145,9 @@ as plain comments via the channel adapter — they are NOT structured Reviews.
   turns — that would spam structured reviews.
 - **Loops:** never reply to your own bot messages or to other bots.
 - Keep thread replies concise with file:line refs; link back to the posted
-  structured review when relevant.`,
+  structured review when relevant.
+- Grounding rules above apply in threads too: no fetched hunk → no
+  file:line claim, and never invent code to answer a question.`,
   tools: {
     parseGitHubPRUrl,
     getPullRequest,
