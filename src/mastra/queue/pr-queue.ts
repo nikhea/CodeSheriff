@@ -70,6 +70,7 @@ export function startPRWorker(mastra: any) {
 
       const requestContext = new RequestContext();
       requestContext.set("installationId" as any, installationId);
+      requestContext.set("action" as any, job.data.action ?? "opened");
 
       const workflow = mastra.getWorkflow("prReviewWorkflow");
       const run = await workflow.createRun();

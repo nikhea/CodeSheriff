@@ -10,6 +10,7 @@ import {
   reviewOutputSchema,
 } from "../lib/schemas";
 import { SKIP_PATTERNS, MEDIUM_PR_MAX, getReviewDepth, MIN_DELETION_ONLY_LINES } from "../lib/review-config";
+import { postReviewToGitHub } from "../lib/github-post";
 
 /** Max total chars across all files in a single agent call. */
 const BATCH_CHAR_BUDGET = 400_000;
@@ -81,6 +82,21 @@ const reviewedSchema = prBaseSchema.extend({
   fileReviews: z.array(fileReviewSchema),
   skippedFiles: z.array(z.string()),
 });
+
+const postedSchema = z.object({
+  posted: z.boolean(),
+  reviewId: z.number().nullable(),
+  mode: z.string(),
+  inlineCount: z.number(),
+});
+
+// aggregateFindings carries identifiers forward so postReview knows where to post.
+const aggregatedSchema = prBaseSchema.extend(aggregateSummarySchema.shape).extend({
+  fileReviews: z.array(fileReviewSchema),
+  skippedFiles: z.array(z.string()),
+});
+
+const finalOutputSchema = aggregatedSchema.extend({ posted: postedSchema });
 
 const fetchPRContext = createStep({
   id: "fetch-pr-context",
@@ -249,9 +265,9 @@ const aggregateFindings = createStep({
   id: "aggregate-findings",
   description: "Synthesize per-file reviews into a cohesive PR review summary",
   inputSchema: reviewedSchema,
-  outputSchema: reviewOutputSchema,
+  outputSchema: aggregatedSchema,
   execute: async ({ inputData, mastra }) => {
-    const { pr, fileReviews, skippedFiles } = inputData;
+    const { owner, repo, pullNumber, pr, fileReviews, skippedFiles } = inputData;
     const agent = mastra.getAgentById("workflow-review-agent");
 
     const issuesSummary = fileReviews
@@ -301,18 +317,60 @@ Rules:
       positiveNotes: [],
     };
 
-    return { ...summary, fileReviews, skippedFiles };
+    return { owner, repo, pullNumber, pr, ...summary, fileReviews, skippedFiles };
+  },
+});
+
+const postReview = createStep({
+  id: "post-review",
+  description: "Post summary + inline review to GitHub via Reviews API (COMMENT only for v1)",
+  inputSchema: aggregatedSchema,
+  outputSchema: finalOutputSchema,
+  execute: async ({ inputData, requestContext, mastra }) => {
+    const logger = mastra?.getLogger?.() ?? console;
+    const { owner, repo, pullNumber, pr, fileReviews, skippedFiles, ...summary } = inputData as any;
+
+    // Studio manual runs (no webhook action) default to dry-run: never post real comments by accident.
+    const action = (requestContext?.get?.("action") as string | undefined) ?? "manual";
+    if (action === "manual") {
+      logger.info?.(`[post-review] dry-run repo=${owner}/${repo} pr=${pullNumber} (no webhook action)`);
+      return {
+        ...summary, fileReviews, skippedFiles,
+        posted: { posted: false, reviewId: null, mode: "dry-run", inlineCount: 0 },
+      };
+    }
+
+    const installationId = resolveInstallationId(requestContext);
+    try {
+      const result = await postReviewToGitHub({
+        installationId, owner, repo, pullNumber, headSha: pr.headSha, action,
+        summary: summary.summary, qualityScore: summary.qualityScore, verdict: summary.verdict,
+        criticalIssues: summary.criticalIssues, securityConcerns: summary.securityConcerns,
+        performanceNotes: summary.performanceNotes, suggestions: summary.suggestions,
+        positiveNotes: summary.positiveNotes, skippedFiles, fileReviews,
+      });
+      logger.info?.(`[post-review] posted repo=${owner}/${repo} pr=${pullNumber} review=${result.reviewId} mode=${result.mode} inline=${result.inlineCount}`);
+      return { ...summary, fileReviews, skippedFiles, posted: result };
+    } catch (err: any) {
+      // Never fail the workflow on posting errors — review data is still returned.
+      logger.error?.(`[post-review] failed repo=${owner}/${repo} pr=${pullNumber}: ${err?.message ?? err}`);
+      return {
+        ...summary, fileReviews, skippedFiles,
+        posted: { posted: false, reviewId: null, mode: "failed", inlineCount: 0 },
+      };
+    }
   },
 });
 
 export const prReviewWorkflow = createWorkflow({
   id: "pr-review-workflow",
-  description: "Structured PR review: fetch → categorize → review → aggregate (posting added in Phase 6)",
+  description: "Structured PR review: fetch → categorize → review → aggregate → post",
   inputSchema: prIdentifierSchema,
-  outputSchema: reviewOutputSchema,
+  outputSchema: finalOutputSchema,
 })
   .then(fetchPRContext)
   .then(categorizeFiles)
   .then(reviewFiles)
   .then(aggregateFindings)
+  .then(postReview)
   .commit();
