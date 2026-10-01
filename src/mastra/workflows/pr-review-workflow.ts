@@ -412,6 +412,38 @@ For EACH file, return an entry with the filename and an array of issues found (e
   },
 });
 
+/**
+ * Normalize the model's preferred wrong envelope into aggregate shape.
+ * gpt-oss:120b deterministically returns {qualityScore, verdict,
+ * issues[]|findings[]} — right judgment, stray key, missing sections.
+ * When the sections are absent but score+verdict parse, fill empty arrays
+ * instead of burning retries on a semantically correct answer.
+ */
+export function coerceAggregateEnvelope(v: unknown): unknown {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const o = v as Record<string, unknown>;
+  const sectionKeys = ["criticalIssues", "securityConcerns", "performanceNotes", "suggestions", "positiveNotes"];
+  if (sectionKeys.some((k) => Array.isArray(o[k]))) return v;
+  if (typeof o.qualityScore !== "number" || typeof o.verdict !== "string") return v;
+  const stray = Array.isArray(o.issues) ? "issues" : Array.isArray(o.findings) ? "findings" : null;
+  if (!stray) return v;
+  const { [stray]: _dropped, ...rest } = o;
+  void _dropped;
+  return {
+    summary:
+      typeof rest.summary === "string" && rest.summary.trim()
+        ? rest.summary
+        : "No issues detected across changed files.",
+    qualityScore: rest.qualityScore,
+    verdict: rest.verdict,
+    criticalIssues: [],
+    securityConcerns: [],
+    performanceNotes: [],
+    suggestions: [],
+    positiveNotes: [],
+  };
+}
+
 const aggregateFindings = createStep({
   id: "aggregate-findings",
   description: "Synthesize per-file reviews into a cohesive PR review summary",
@@ -441,7 +473,7 @@ const aggregateFindings = createStep({
 - **Description:** ${pr.body || "(no description)"}
 - **Stats:** +${pr.additions}/-${pr.deletions} across ${pr.changedFiles} files
 
-## Per-File Findings
+## Per-File Issues
 ${issuesSummary || "No issues found in any file."}
 
 ## Skipped Files
@@ -458,9 +490,9 @@ Rules:
   securityConcerns (string[]), performanceNotes (string[]),
   suggestions (string[]), positiveNotes (string[]). Use empty arrays —
   never omit a key, never null.
-- NEVER emit an "issues" key — that belongs to per-file reviews, not this
-  synthesis. If there is nothing to flag, return empty arrays with a
-  one-sentence summary saying so.`;
+- NEVER emit an "issues" or "findings" key — those belong to per-file
+  reviews, not this synthesis. If there is nothing to flag, return empty
+  arrays with a one-sentence summary saying so.`;
 
     const summary = await generateStructured<z.infer<typeof aggregateSummarySchema>>(
       agent,
@@ -482,7 +514,8 @@ Rules:
       // rather than stamping defaults over its words.
       (prose) => parseSalvagedReview(prose),
       30,
-      prMemory(owner, repo, pullNumber)
+      prMemory(owner, repo, pullNumber),
+      coerceAggregateEnvelope
     );
 
     await emitProgress(writer, owner, repo, pullNumber, {

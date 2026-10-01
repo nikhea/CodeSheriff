@@ -10,12 +10,16 @@ function extractModelText(err: any): string | null {
 }
 
 /** Try to find a ```json fenced block in prose and validate it against the schema. */
-function salvageJson<T>(text: string, schema: z.ZodTypeAny): T | null {
+function salvageJson<T>(
+  text: string,
+  schema: z.ZodTypeAny,
+  coerce: (v: unknown) => unknown = (v) => v
+): T | null {
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidates = [fence?.[1], text].filter(Boolean) as string[];
   for (const raw of candidates) {
     try {
-      const parsed = JSON.parse(raw.trim());
+      const parsed = coerce(JSON.parse(raw.trim()));
       const checked = (schema as z.ZodTypeAny).safeParse(parsed);
       if (checked.success) return checked.data as T;
     } catch {
@@ -44,7 +48,11 @@ export async function generateStructured<T>(
   maxSteps = 30,
   // Memory identity. Without explicit thread/resource, observational +
   // working memory stay inert (nothing to attach observations to).
-  memory?: { thread: string; resource: string }
+  memory?: { thread: string; resource: string },
+  // Coercion applied to parsed JSON before validation: normalizes a known
+  // model dialect (right judgment, wrong envelope) into schema shape so a
+  // semantically correct answer validates instead of burning retries.
+  coerceJson: (v: unknown) => unknown = (v) => v
 ): Promise<T> {
   const strict = `${prompt}\n\nReturn ONLY valid JSON matching the required schema. No markdown fences, no prose, no explanation.`;
   const opts = { structuredOutput: { schema }, maxSteps, ...(memory ? { memory } : {}) };
@@ -65,9 +73,9 @@ export async function generateStructured<T>(
   // Last resort: the model's prose may contain fenced JSON or usable text.
   const prose = extractModelText(lastErr);
   if (prose) {
-    const json = salvageJson<T>(prose, schema);
+    const json = salvageJson<T>(prose, schema, coerceJson);
     if (json !== null) {
-      logger?.warn?.(`[structured] ${label} salvaged fenced JSON from prose`);
+      logger?.warn?.(`[structured] ${label} coerced model JSON into schema shape`);
       return json;
     }
     if (salvageProse) {
