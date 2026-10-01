@@ -13,6 +13,14 @@ import { SKIP_PATTERNS, MEDIUM_PR_MAX, getReviewDepth, MIN_DELETION_ONLY_LINES }
 import { postReviewToGitHub } from "../lib/github-post";
 import { generateStructured } from "../lib/structured";
 
+/** Memory identity for a PR run: thread per PR, resource per repo. */
+function prMemory(owner: string, repo: string, pullNumber: number) {
+  return {
+    thread: `pr-${owner}-${repo}-${pullNumber}`,
+    resource: `repo-${owner}/${repo}`,
+  };
+}
+
 /** Max total chars across all files in a single agent call. */
 const BATCH_CHAR_BUDGET = 400_000;
 /** Max files per agent call. */
@@ -223,7 +231,9 @@ const reviewFiles = createStep({
       : reviewableFiles.map((f) => ({ ...f, content: "" }));
 
     const batches = batchFiles(entries, includeContent);
-    const isLargePR = reviewableFiles.length > MEDIUM_PR_MAX;
+
+    // Batches are independent — always run in parallel. (Sequential only
+    // throttles wall-clock; rate limits are guarded by the queue limiter.)
 
     function buildPrompt(batch: FileEntry[], batchIndex: number): string {
       const label =
@@ -257,21 +267,16 @@ For EACH file, return an entry with the filename and an array of issues found (e
         z.array(fileReviewSchema),
         [],
         `review-batch-${idx + 1}/${batches.length}`,
-        mastra?.getLogger?.()
+        mastra?.getLogger?.(),
+        undefined,
+        30,
+        prMemory(owner, repo, pullNumber)
       );
     }
 
     let allReviews: z.infer<typeof fileReviewSchema>[];
-
-    if (isLargePR) {
-      const results = await Promise.all(batches.map((batch, i) => reviewBatch(batch, i)));
-      allReviews = results.flat();
-    } else {
-      allReviews = [];
-      for (let i = 0; i < batches.length; i++) {
-        allReviews.push(...(await reviewBatch(batches[i], i)));
-      }
-    }
+    const results = await Promise.all(batches.map((batch, i) => reviewBatch(batch, i)));
+    allReviews = results.flat();
 
     return { owner, repo, pullNumber, pr, fileReviews: allReviews, skippedFiles };
   },
@@ -345,7 +350,9 @@ Rules:
         performanceNotes: [],
         suggestions: [],
         positiveNotes: [],
-      })
+      }),
+      30,
+      prMemory(owner, repo, pullNumber)
     );
 
     return { owner, repo, pullNumber, pr, ...summary, fileReviews, skippedFiles };

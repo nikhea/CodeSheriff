@@ -2,7 +2,7 @@ import { Agent } from "@mastra/core/agent";
 
 /**
  * Lightweight reviewer used exclusively by the PR review workflow.
- * - Fallback chain (muse-glimmer-30b primary, gpt-oss:120b backup)
+ * - Fallback chain (gpt-oss:120b primary — proven in this env, glimmer-30b backup)
  * - NO tools — workflow feeds diffs directly
  * - Structured-findings focus; aggregation happens downstream
  */
@@ -11,12 +11,12 @@ export const workflowReviewAgent = new Agent({
   name: "CodeSheriff Workflow Reviewer",
   model: [
     {
-      model: "nvidia/meta/muse-glimmer-30b",
+      model: "ollama-cloud/gpt-oss:120b",
       maxRetries: 2,
     },
     {
-      model: "ollama-cloud/gpt-oss:120b",
-      maxRetries: 3,
+      model: "nvidia/meta/muse-glimmer-30b",
+      maxRetries: 2,
     },
   ],
   instructions: `You are CodeSheriff's workflow reviewer. You receive PR file diffs and contents and return structured findings.
@@ -34,6 +34,7 @@ export const workflowReviewAgent = new Agent({
 - Acknowledge good patterns as "positive" severity.
 - Be concise — output is aggregated across batches.
 - On HIGH-LEVEL depth, skip minor style entirely.
+- Heed the Repo Review Profile in working memory (conventions, known risks, calibration) when present; the Observer keeps it updated, you only read it.
 
 Also apply the repo's code-standards, security-review, and performance-review skills.`,
 });

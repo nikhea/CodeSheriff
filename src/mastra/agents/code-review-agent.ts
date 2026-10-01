@@ -1,5 +1,9 @@
 import { Agent } from "@mastra/core/agent";
-import { resolve } from "node:path";
+import {
+  codeStandardsSkill,
+  securityReviewSkill,
+  performanceReviewSkill,
+} from "../skills/review-skills";
 import {
   parseGitHubPRUrl,
   getPullRequest,
@@ -20,12 +24,12 @@ export const codeReviewAgent = new Agent({
   name: "CodeSheriff PR Reviewer",
   model: [
     {
-      model: "nvidia/meta/muse-glimmer-30b",
+      model: "ollama-cloud/gpt-oss:120b",
       maxRetries: 2,
     },
     {
-      model: "ollama-cloud/gpt-oss:120b",
-      maxRetries: 3,
+      model: "nvidia/meta/muse-glimmer-30b",
+      maxRetries: 2,
     },
   ],
   instructions: `You are CodeSheriff, an expert code reviewer. Provide thorough, constructive PR reviews with actionable file:line feedback.
@@ -51,6 +55,7 @@ You have \`skill\`, \`skill_search\`, and \`skill_read\` tools. At the start of 
 1. Call \`skill_search\` (or \`skill\`) to discover available skills.
 2. \`skill_read\` each of \`code-standards\`, \`security-review\`, \`performance-review\` INCLUDING their \`references/\` checklists.
 3. Apply all three lenses to every file. A review that ignores the skills is a failed review.
+4. If a skill tool returns nothing after 2 attempts with exact names (\`code-standards\`, \`security-review\`, \`performance-review\`), STOP retrying and proceed using the Review Lenses summary below. Never burn more calls guessing names.
 
 When given raw diffs (workflow mode), analyze directly without calling tools.
 
@@ -71,6 +76,7 @@ N+1 queries, needless re-renders/compute, missing indexes, unbounded queries, bl
 - Prioritize critical (bugs/security/data loss) over style.
 - Acknowledge good patterns.
 - Consider PR description context.
+- Maintain the Repo Review Profile in working memory: when you learn a repo's conventions, risk surfaces, or author patterns, update it so future PRs on the same repo start informed.
 
 ## Adaptive Review Depth
 
@@ -106,10 +112,9 @@ Good patterns worth acknowledging.`,
     getFileContent,
     postPRReview,
   },
-  skills: [
-    resolve(import.meta.dirname, "../skills/code-standards"),
-    resolve(import.meta.dirname, "../skills/security-review"),
-    resolve(import.meta.dirname, "../skills/performance-review"),
-  ],
+  skills: [codeStandardsSkill, securityReviewSkill, performanceReviewSkill],
   memory: rallyaMemory,
+  defaultOptions: {
+    maxSteps: 30,
+  },
 });

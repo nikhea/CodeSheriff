@@ -41,16 +41,20 @@ export async function generateStructured<T>(
   logger?: { warn?: (...a: any[]) => void },
   salvageProse?: (text: string) => T | null,
   // Generous step budget: paginated reads + structured retries need headroom.
-  maxSteps = 30
+  maxSteps = 30,
+  // Memory identity. Without explicit thread/resource, observational +
+  // working memory stay inert (nothing to attach observations to).
+  memory?: { thread: string; resource: string }
 ): Promise<T> {
   const strict = `${prompt}\n\nReturn ONLY valid JSON matching the required schema. No markdown fences, no prose, no explanation.`;
+  const opts = { structuredOutput: { schema }, maxSteps, ...(memory ? { memory } : {}) };
   let lastErr: any = null;
   for (const attemptPrompt of [
     strict,
     `OUTPUT JSON ONLY. No markdown. No commentary.\n\n${prompt}`,
   ]) {
     try {
-      const res = await agent.generate(attemptPrompt, { structuredOutput: { schema }, maxSteps });
+      const res = await agent.generate(attemptPrompt, opts);
       if (res.object !== undefined && res.object !== null) return res.object;
       lastErr = new Error("empty structured output");
     } catch (err: any) {

@@ -10,7 +10,7 @@
 - **Env:** required `GITHUB_APP_ID, GITHUB_PRIVATE_KEY (\n-escaped), GITHUB_WEBHOOK_SECRET` (fail fast where used, boot-logged via `lib/env.ts`); optional `REDIS_URL` (default localhost, graceful degrade), `GITHUB_INSTALLATION_ID` (Studio fallback only). No OpenAI.
 - **Queue:** thin BullMQ `pr-review` (`jobId=pr-{repo}-{n}-{sha}`, attempts 3, concurrency 2) + direct-call fallback if Redis down.
 - **Pipeline:** `fetch → categorize → review → aggregate → postReview`. Thresholds `SMALL=6 / MEDIUM=20`, batches `400k chars / 40 files`, `SKIP_PATTERNS`, deletion-only 50.
-- **Agents:** `code-review (glimmer-30b → gpt-oss:120b fallback, 6 Octokit tools incl. postPRReview)` + `workflow-reviewer (same fallback chain, no tools)`, agent-level `skills: [code-standards, security-review, performance-review]`, shared `rallyaMemory` (observer `ollama-cloud/gpt-oss:120b`, working memory resource scope). No OpenAI anywhere.
+- **Agents:** `code-review (gpt-oss:120b primary → glimmer-30b backup, 6 Octokit tools incl. postPRReview)` + `workflow-reviewer (same fallback chain, no tools)`, agent-level `skills: [code-standards, security-review, performance-review]`, shared `rallyaMemory` (observer `ollama-cloud/gpt-oss:120b`, working memory resource scope). No OpenAI anywhere.
 - **Post:** Reviews API `commit_id=headSha`, marker `<!-- codesheriff:{sha} -->`, `event:COMMENT` always for v1, 422-tolerant inline. `opened` = summary + inline criticals, `synchronize` = upsert summary only. Ignore bot/draft/empty.
 - **Infra:** local Redis (`redis-cli ping` → PONG), `ngrok http 4111` → Mastra dev `:4111`. `simple-git` installed but unused v1.
 
