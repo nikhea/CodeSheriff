@@ -39,7 +39,9 @@ export async function generateStructured<T>(
   fallback: T,
   label: string,
   logger?: { warn?: (...a: any[]) => void },
-  salvageProse?: (text: string) => T | null
+  salvageProse?: (text: string) => T | null,
+  // Generous step budget: paginated reads + structured retries need headroom.
+  maxSteps = 30
 ): Promise<T> {
   const strict = `${prompt}\n\nReturn ONLY valid JSON matching the required schema. No markdown fences, no prose, no explanation.`;
   let lastErr: any = null;
@@ -48,7 +50,7 @@ export async function generateStructured<T>(
     `OUTPUT JSON ONLY. No markdown. No commentary.\n\n${prompt}`,
   ]) {
     try {
-      const res = await agent.generate(attemptPrompt, { structuredOutput: { schema } });
+      const res = await agent.generate(attemptPrompt, { structuredOutput: { schema }, maxSteps });
       if (res.object !== undefined && res.object !== null) return res.object;
       lastErr = new Error("empty structured output");
     } catch (err: any) {
