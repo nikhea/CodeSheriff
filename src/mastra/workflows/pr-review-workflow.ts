@@ -11,6 +11,7 @@ import {
 } from "../lib/schemas";
 import { SKIP_PATTERNS, MEDIUM_PR_MAX, getReviewDepth, MIN_DELETION_ONLY_LINES } from "../lib/review-config";
 import { postReviewToGitHub } from "../lib/github-post";
+import { generateStructured } from "../lib/structured";
 
 /** Max total chars across all files in a single agent call. */
 const BATCH_CHAR_BUDGET = 400_000;
@@ -250,10 +251,14 @@ For EACH file, return an entry with the filename and an array of issues found (e
     }
 
     async function reviewBatch(batch: FileEntry[], idx: number) {
-      const response = await agent.generate(buildPrompt(batch, idx), {
-        structuredOutput: { schema: z.array(fileReviewSchema) },
-      });
-      return response.object ?? [];
+      return generateStructured<z.infer<typeof fileReviewSchema>[]>(
+        agent,
+        buildPrompt(batch, idx),
+        z.array(fileReviewSchema),
+        [],
+        `review-batch-${idx + 1}/${batches.length}`,
+        mastra?.getLogger?.()
+      );
     }
 
     let allReviews: z.infer<typeof fileReviewSchema>[];
@@ -313,20 +318,23 @@ Rules:
 - Be specific with file:line references
 - Deduplicate similar issues across files`;
 
-    const response = await agent.generate(prompt, {
-      structuredOutput: { schema: aggregateSummarySchema },
-    });
-
-    const summary = response.object ?? {
-      summary: "Review could not be generated.",
-      qualityScore: 5,
-      verdict: "COMMENT" as const,
-      criticalIssues: [],
-      securityConcerns: [],
-      performanceNotes: [],
-      suggestions: [],
-      positiveNotes: [],
-    };
+    const summary = await generateStructured<z.infer<typeof aggregateSummarySchema>>(
+      agent,
+      prompt,
+      aggregateSummarySchema,
+      {
+        summary: "Review could not be generated.",
+        qualityScore: 5,
+        verdict: "COMMENT" as const,
+        criticalIssues: [],
+        securityConcerns: [],
+        performanceNotes: [],
+        suggestions: [],
+        positiveNotes: [],
+      },
+      "aggregate-findings",
+      mastra?.getLogger?.()
+    );
 
     return { owner, repo, pullNumber, pr, ...summary, fileReviews, skippedFiles };
   },
