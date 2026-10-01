@@ -13,6 +13,14 @@ import { SKIP_PATTERNS, MEDIUM_PR_MAX, getReviewDepth, MIN_DELETION_ONLY_LINES }
 import { postReviewToGitHub } from "../lib/github-post";
 import { generateStructured } from "../lib/structured";
 
+/** Memory identity for a PR run: thread per PR, resource per repo. */
+function prMemory(owner: string, repo: string, pullNumber: number) {
+  return {
+    thread: `pr-${owner}-${repo}-${pullNumber}`,
+    resource: `repo-${owner}/${repo}`,
+  };
+}
+
 /** Max total chars across all files in a single agent call. */
 const BATCH_CHAR_BUDGET = 400_000;
 /** Max files per agent call. */
@@ -259,7 +267,10 @@ For EACH file, return an entry with the filename and an array of issues found (e
         z.array(fileReviewSchema),
         [],
         `review-batch-${idx + 1}/${batches.length}`,
-        mastra?.getLogger?.()
+        mastra?.getLogger?.(),
+        undefined,
+        30,
+        prMemory(owner, repo, pullNumber)
       );
     }
 
@@ -339,7 +350,9 @@ Rules:
         performanceNotes: [],
         suggestions: [],
         positiveNotes: [],
-      })
+      }),
+      30,
+      prMemory(owner, repo, pullNumber)
     );
 
     return { owner, repo, pullNumber, pr, ...summary, fileReviews, skippedFiles };

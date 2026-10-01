@@ -76,6 +76,7 @@ N+1 queries, needless re-renders/compute, missing indexes, unbounded queries, bl
 - Prioritize critical (bugs/security/data loss) over style.
 - Acknowledge good patterns.
 - Consider PR description context.
+- Maintain the Repo Review Profile in working memory: when you learn a repo's conventions, risk surfaces, or author patterns, update it so future PRs on the same repo start informed.
 
 ## Adaptive Review Depth
 

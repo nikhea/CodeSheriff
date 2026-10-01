@@ -1,31 +1,29 @@
 import { Memory } from "@mastra/memory";
 
 /**
- * Shared memory for the Rallya agents.
+ * Shared memory for the CodeSheriff PR review agents.
  *
  * Two layers, each with deliberate scope:
  *
  * - **Observational memory (thread scope):** background Observer/Reflector
- *   compress each conversation's raw history into a dense observation log.
- *   Scoped per thread, so long door-ops or setup sessions stay coherent
- *   without polluting other conversations. Requires a `thread` id per call.
- * - **Working memory (resource scope):** persistent user/org profile shared
- *   across ALL threads of the same resource (user). The agent maintains it
- *   via the working-memory tool: default org/event slugs, timezone,
- *   notification and checkout preferences.
+ *   compress each PR's raw diffs/tool results into a dense observation log.
+ *   Scoped per PR thread (`pr-<owner>-<repo>-<n>`), so long reviews stay
+ *   coherent without polluting other PRs. The Observer ALSO maintains
+ *   working memory automatically (manageWorkingMemory) — the workflow
+ *   agents use structured output (no tool calls), so they can't update it
+ *   themselves.
+ * - **Working memory (resource scope):** persistent repo review profile
+ *   shared across ALL PR threads of the same repo (`repo-<owner>/<repo>`):
+ *   conventions, known risk surfaces, author patterns, calibration.
+ *   The agent reads it from context every run; the Observer keeps it fresh.
  *
  * Storage comes from the Mastra instance (LibSQL), which supports both the
  * observation log and the `mastra_resources` table working memory needs.
- * Calls should pass `{ resource, thread }` — resource identifies the user
- * (shared profile), thread isolates the conversation (own observations).
+ * Workflow runs pass `{ resource, thread }` explicitly (see
+ * generateStructured `memory` param); Studio chat manages its own.
  *
  * The Observer/Reflector model is overridable via RALLYA_MEMORY_MODEL
  * (any `provider/model` id); it needs its own provider key.
- *
- * Thread titles are generated server-side (`generateTitle`): after the first
- * exchange Mastra summarizes the thread into a short title and persists it.
- * The title model is overridable via RALLYA_TITLE_MODEL — small/cheap is
- * fine, classification-style work only.
  */
 export const rallyaMemory = new Memory({
   options: {
@@ -45,23 +43,25 @@ export const rallyaMemory = new Memory({
     observationalMemory: {
       scope: "thread",
       model: "ollama-cloud/gpt-oss:120b",
+      observation: {
+        // Workflow agents use structured output (no tool calls), so they
+        // can't update working memory themselves — the Observer does it.
+        manageWorkingMemory: true,
+      },
     },
     workingMemory: {
       enabled: true,
       scope: "resource",
-      template: `# Organizer Profile
-- **Name**:
-- **Timezone**:
-- **Default org** (slug):
-- **Frequent events** (slugs):
+      template: `# Repo Review Profile
+- **Repo**:
+- **Languages** (e.g. TypeScript, Python):
+- **Conventions** (naming, structure, error handling):
+- **Known risks** (auth surfaces, injection points, perf-sensitive paths):
+- **Author patterns** (recurring issues by contributor):
 
-## Preferences
-- **Currency** (e.g. USD):
-- **Communication style** (e.g. concise):
-
-## Session state
-- **Last task**:
-- **Open questions**:
+## Calibration
+- **Strictness** (e.g. strict on security, lenient on style):
+- **Past verdicts** (e.g. PR #12 REQUEST_CHANGES for missing auth check):
 `,
     },
   },

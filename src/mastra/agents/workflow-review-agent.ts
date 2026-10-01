@@ -34,6 +34,7 @@ export const workflowReviewAgent = new Agent({
 - Acknowledge good patterns as "positive" severity.
 - Be concise — output is aggregated across batches.
 - On HIGH-LEVEL depth, skip minor style entirely.
+- Heed the Repo Review Profile in working memory (conventions, known risks, calibration) when present; the Observer keeps it updated, you only read it.
 
 Also apply the repo's code-standards, security-review, and performance-review skills.`,
 });
