@@ -1,8 +1,81 @@
 import { getInstallationOctokit } from "./github-app";
-
 /** Marker embedded in review bodies for dedupe/tracing. */
 export function reviewMarker(sha: string): string {
   return `<!-- codesheriff-review ${sha} -->`;
+}
+
+/** Marker for the transient "review in progress" placeholder comment. */
+export function progressMarker(sha: string): string {
+  return `<!-- codesheriff-progress ${sha} -->`;
+}
+
+export interface ProgressInput {
+  installationId: number;
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  headSha: string;
+}
+
+/**
+ * Post the "review started" placeholder as an issue comment (deletable later —
+ * reviews can't be deleted via API, so the placeholder must not be a review).
+ * Best-effort: returns comment id or null, never throws.
+ */
+export async function postStartedComment(input: ProgressInput): Promise<number | null> {
+  try {
+    const octokit = await getInstallationOctokit(input.installationId);
+    const { data } = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+      owner: input.owner,
+      repo: input.repo,
+      issue_number: input.pullNumber,
+      body: `🔍 **CodeSheriff** review started for \`${input.headSha.slice(0, 7)}\` — results will appear as a review shortly.\n\n${progressMarker(input.headSha)}`,
+    });
+    return (data as any)?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Delete the placeholder once the real review lands. Best-effort, never throws. */
+export async function deleteProgressComment(input: ProgressInput): Promise<boolean> {
+  try {
+    const octokit = await getInstallationOctokit(input.installationId);
+    const { data } = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+      owner: input.owner,
+      repo: input.repo,
+      issue_number: input.pullNumber,
+      per_page: 100,
+    });
+    const hit = (data as any[]).find(
+      (c) => typeof c?.body === "string" && c.body.includes(progressMarker(input.headSha))
+    );
+    if (!hit) return false;
+    await octokit.request("DELETE /repos/{owner}/{repo}/issues/comments/{comment_id}", {
+      owner: input.owner,
+      repo: input.repo,
+      comment_id: hit.id,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Leave a failure note so a stuck "started" placeholder isn't the last word. Best-effort. */
+export async function postFailedComment(input: ProgressInput): Promise<void> {
+  try {
+    const octokit = await getInstallationOctokit(input.installationId);
+    await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+      owner: input.owner,
+      repo: input.repo,
+      issue_number: input.pullNumber,
+      body: `⚠️ **CodeSheriff** review failed for \`${input.headSha.slice(0, 7)}\` — check the worker logs, then re-push to retry.`,
+    });
+  } catch {
+    /* best-effort */
+  }
+  await deleteProgressComment(input);
 }
 
 function parseLine(line?: string): number | null {
@@ -97,6 +170,13 @@ export async function postReviewToGitHub(input: PostReviewInput): Promise<{
   }
 
   const body = buildBody(input, mode);
+  const progress = {
+    installationId: input.installationId,
+    owner: input.owner,
+    repo: input.repo,
+    pullNumber: input.pullNumber,
+    headSha: input.headSha,
+  };
 
   try {
     const { data } = await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
@@ -108,6 +188,7 @@ export async function postReviewToGitHub(input: PostReviewInput): Promise<{
       body,
       comments: comments as any,
     });
+    await deleteProgressComment(progress);
     return { posted: true, reviewId: (data as any)?.id ?? null, mode, inlineCount: comments.length };
   } catch (err: any) {
     // Fallback: summary as issue comment (no inline) so the review isn't lost.
@@ -120,6 +201,7 @@ export async function postReviewToGitHub(input: PostReviewInput): Promise<{
         event: "COMMENT",
         body: body + `\n\n> Note: ${comments.length} inline comment(s) omitted (lines not in diff).`,
       });
+      await deleteProgressComment(progress);
       return { posted: true, reviewId: (data as any)?.id ?? null, mode: "summary-only", inlineCount: 0 };
     }
     throw err;
