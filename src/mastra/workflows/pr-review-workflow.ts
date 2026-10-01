@@ -429,12 +429,13 @@ export function coerceAggregateEnvelope(v: unknown): unknown {
   if (!stray) return v;
   const { [stray]: _dropped, ...rest } = o;
   void _dropped;
+  const rawScore = typeof rest.qualityScore === "number" ? rest.qualityScore : 7;
   return {
     summary:
       typeof rest.summary === "string" && rest.summary.trim()
         ? rest.summary
         : "No issues detected across changed files.",
-    qualityScore: rest.qualityScore,
+    qualityScore: Math.min(10, Math.max(1, Math.round(rawScore))),
     verdict: rest.verdict,
     criticalIssues: [],
     securityConcerns: [],
