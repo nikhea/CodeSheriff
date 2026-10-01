@@ -25,6 +25,7 @@
     "migrate:memory": "bun scripts/migrate-working-memory.ts"
   },
   "dependencies": {
+    "@chat-adapter/github": "^4.41.1",
     "@mastra/core": "^1.73.0",
     "@mastra/duckdb": "^1.12.1",
     "@mastra/evals": "^1.10.5",

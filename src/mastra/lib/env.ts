@@ -9,6 +9,8 @@
  * Optional (each has a default or graceful fallback):
  * - REDIS_URL (default redis://localhost:6379; webhook returns queued:false if down)
  * - GITHUB_INSTALLATION_ID (Studio manual-run fallback only; webhooks supply the real id)
+ * - GITHUB_BOT_USERNAME (channel @mention detection; adapter defaults to github-bot)
+ * - GITHUB_BOT_USER_ID (numeric …[bot] id; required for self-reply loop prevention)
  *
  * No OpenAI: agents run nvidia/meta/muse-glimmer-30b → ollama-cloud/gpt-oss:120b,
  * observer runs ollama-cloud/gpt-oss:120b. Provider credentials live wherever
@@ -20,6 +22,8 @@ const REQUIRED = ["GITHUB_APP_ID", "GITHUB_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"
 const OPTIONAL: Array<{ name: string; fallback: string }> = [
   { name: "REDIS_URL", fallback: "defaults to redis://localhost:6379; webhook degrades to queued:false" },
   { name: "GITHUB_INSTALLATION_ID", fallback: "Studio manual runs only; webhooks carry installation.id" },
+  { name: "GITHUB_BOT_USERNAME", fallback: "@mention detection on the channel adapter (defaults to github-bot)" },
+  { name: "GITHUB_BOT_USER_ID", fallback: "self-reply loop prevention; find via api.github.com/users/<bot>%5Bbot%5D" },
 ];
 
 export function checkEnv() {

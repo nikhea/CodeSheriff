@@ -18,6 +18,7 @@ import {
   MEDIUM_PR_MAX,
 } from "../lib/review-config";
 import { rallyaMemory } from "../utils/memory";
+import { githubChannelAdapter, getChannelInstallationId } from "../lib/github-channel";
 
 export const codeReviewAgent = new Agent({
   id: "code-review-agent",
@@ -103,7 +104,27 @@ Else "No performance concerns identified."
 Naming, refactor, tests, docs.
 
 ### Positive Notes ✅
-Good patterns worth acknowledging.`,
+Good patterns worth acknowledging.
+
+## GitHub @mention replies (channel threads)
+
+You are also reachable via @mentions in PR / issue comment threads
+(issue_comment + pull_request_review_comment webhooks). Thread replies post
+as plain comments via the channel adapter — they are NOT structured Reviews.
+
+- **Scope:** only review-related mentions (re-review, explain a finding,
+  why a change was flagged, suggest a fix, check a push). For anything
+  unrelated, reply one line declining and do nothing else.
+- **Default:** answer directly in the thread. Use the Octokit read tools
+  (getPullRequest, getPullRequestFiles, getFileContent, getPullRequestDiff)
+  to fetch fresh context; the channel handler already bridges
+  installationId into requestContext for you.
+- **postPRReview:** call it ONLY when the user explicitly asks for a full
+  re-review or formal review to be posted. Never call it for Q&A/explain
+  turns — that would spam structured reviews.
+- **Loops:** never reply to your own bot messages or to other bots.
+- Keep thread replies concise with file:line refs; link back to the posted
+  structured review when relevant.`,
   tools: {
     parseGitHubPRUrl,
     getPullRequest,
@@ -114,6 +135,43 @@ Good patterns worth acknowledging.`,
   },
   skills: [codeStandardsSkill, securityReviewSkill, performanceReviewSkill],
   memory: rallyaMemory,
+  channels: {
+    adapters: {
+      // Mention replies land on the auto-mounted route
+      // /api/agents/code-review-agent/channels/github/webhook.
+      // Tool calls stay silent in PR threads (plain-text replies only).
+      github: { adapter: githubChannelAdapter, toolDisplay: "hidden" },
+    },
+    handlers: {
+      // Bridge installationId so Octokit tools work in channel threads.
+      // The adapter resolves it per-installation (multi-tenant); without it
+      // the tools fall back to GITHUB_INSTALLATION_ID and fail on webhooks.
+      onMention: async (thread, message, defaultHandler, ctx) => {
+        try {
+          if ((message as any)?.author?.isBot === true) return;
+          const installationId = await getChannelInstallationId(thread as any);
+          if (installationId !== undefined) {
+            ctx.requestContext.set("installationId" as any, installationId);
+          }
+        } catch {
+          // Non-fatal: default handler + tools surface a clear error.
+        }
+        await defaultHandler(thread, message);
+      },
+      onSubscribedMessage: async (thread, message, defaultHandler, ctx) => {
+        try {
+          if ((message as any)?.author?.isBot === true) return;
+          const installationId = await getChannelInstallationId(thread as any);
+          if (installationId !== undefined) {
+            ctx.requestContext.set("installationId" as any, installationId);
+          }
+        } catch {
+          // Non-fatal: default handler + tools surface a clear error.
+        }
+        await defaultHandler(thread, message);
+      },
+    },
+  },
   defaultOptions: {
     maxSteps: 30,
   },
