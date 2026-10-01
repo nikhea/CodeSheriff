@@ -1,12 +1,15 @@
 import { registerApiRoute } from "@mastra/core/server";
 import { Webhooks } from "@octokit/webhooks";
 import { enqueuePRReview, prJobId } from "../queue/pr-queue";
+import { enqueueIssueTriage, issueJobId } from "../queue/issue-queue";
 import { postStartedComment } from "../lib/github-post";
 
 /**
  * GitHub App webhook ingress.
- * Verifies HMAC via @octokit/webhooks, filters to PR opened/synchronize,
- * and (Phase 5) enqueues to BullMQ. For Phase 4: validates + logs, returns 202.
+ * Verifies HMAC via @octokit/webhooks, handles:
+ * - pull_request opened/synchronize/... → BullMQ pr-review queue
+ * - issues opened → BullMQ issue-triage queue
+ * Other events/actions are acknowledged without work.
  */
 
 const REVIEW_ACTIONS = new Set(["opened", "synchronize", "reopened", "ready_for_review"]);
@@ -48,11 +51,46 @@ export const githubWebhookRoute = registerApiRoute("/webhooks/github", {
       return c.json({ msg: "pong", zen: payload?.zen ?? null });
     }
 
-    if (event !== "pull_request") {
+    if (event !== "pull_request" && event !== "issues") {
       return c.json({ received: true, skipped: `event=${event}` });
     }
 
     const action = payload?.action;
+
+    // Issue triage: newly opened issues get verified against what the repo
+    // is building (classification + alignment verdict + labels).
+    if (event === "issues") {
+      if (action !== "opened") {
+        return c.json({ received: true, skipped: `issues.action=${action}` });
+      }
+      if (payload?.sender?.type === "Bot") {
+        return c.json({ received: true, skipped: "sender-is-bot" });
+      }
+      const installationId = payload?.installation?.id;
+      if (!installationId) {
+        return c.json({ error: "missing installation.id" }, 400);
+      }
+      const owner = payload.repository?.owner?.login;
+      const repo = payload.repository?.name;
+      const issueNumber = payload.issue?.number ?? payload.number;
+      if (!owner || !repo || !issueNumber) {
+        return c.json({ error: "missing repo/issue identifiers" }, 400);
+      }
+      logger.info?.(
+        `[webhook] issues.opened delivery=${delivery} repo=${owner}/${repo} issue=${issueNumber}`
+      );
+      try {
+        const { jobId } = await enqueueIssueTriage({ owner, repo, issueNumber, installationId, action });
+        return c.json({ received: true, queued: true, jobId, owner, repo, issueNumber, action, delivery }, 202);
+      } catch (err: any) {
+        logger.error?.(`[webhook] issue enqueue failed: ${err?.message ?? err} (jobId=${issueJobId({ owner, repo, issueNumber })})`);
+        return c.json(
+          { received: true, queued: false, error: "queue unavailable", owner, repo, issueNumber, action, delivery },
+          202
+        );
+      }
+    }
+
     if (!REVIEW_ACTIONS.has(action)) {
       return c.json({ received: true, skipped: `action=${action}` });
     }
