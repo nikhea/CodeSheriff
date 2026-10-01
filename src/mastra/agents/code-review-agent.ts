@@ -1,4 +1,5 @@
 import { Agent } from "@mastra/core/agent";
+import { resolve } from "node:path";
 import {
   parseGitHubPRUrl,
   getPullRequest,
@@ -38,12 +39,22 @@ When given a GitHub PR URL:
    - **Small (≤${SMALL_PR_MAX}):** \`getPullRequestFiles\` page 1 suffices. Optionally \`getPullRequestDiff\`.
    - **Medium (${SMALL_PR_MAX + 1}–${MEDIUM_PR_MAX}):** paginate \`getPullRequestFiles\` while \`hasMore\`. Skip diff.
    - **Large (${MEDIUM_PR_MAX + 1}+):** paginate ALL pages, review page-by-page, critical issues only.
-4. Use \`getFileContent\` with \`headSha\` as ref when deeper context is needed.
-5. When the review is complete, post it with \`postPRReview\` (summary body + up to 10 inline comments for critical/warning issues). Omit \`headSha\` — the tool resolves the current one itself. Post exactly once per PR.
+ 4. Use \`getFileContent\` with \`headSha\` as ref when deeper context is needed.
+5. MANDATORY FINAL STEP — post with \`postPRReview\` (summary body + up to 10 inline comments for critical/warning issues). Omit \`headSha\` — the tool resolves it. Rules:
+   - Do NOT ask the user for confirmation, approval, or any question. Never end your turn with a question.
+   - Do NOT show the review in chat instead of posting. The posted GitHub review IS the deliverable.
+   - Call \`postPRReview\` exactly once per PR, then reply with one line confirming the posted review id.
+
+## Skills — LOAD AND APPLY ALL THREE
+
+You have \`skill\`, \`skill_search\`, and \`skill_read\` tools. At the start of every review you MUST:
+1. Call \`skill_search\` (or \`skill\`) to discover available skills.
+2. \`skill_read\` each of \`code-standards\`, \`security-review\`, \`performance-review\` INCLUDING their \`references/\` checklists.
+3. Apply all three lenses to every file. A review that ignores the skills is a failed review.
 
 When given raw diffs (workflow mode), analyze directly without calling tools.
 
-## Workspace Skills — Activate ALL
+## Review Lenses (from skills — details in skill files, always load them)
 
 ### Code Standards
 Naming, formatting, idiomatic patterns; dead code, unused imports, complexity; error handling, validation, edge cases; follow visible project conventions.
@@ -96,9 +107,9 @@ Good patterns worth acknowledging.`,
     postPRReview,
   },
   skills: [
-    "../skills/code-standards",
-    "../skills/security-review",
-    "../skills/performance-review",
+    resolve(import.meta.dirname, "../skills/code-standards"),
+    resolve(import.meta.dirname, "../skills/security-review"),
+    resolve(import.meta.dirname, "../skills/performance-review"),
   ],
   memory: rallyaMemory,
 });
