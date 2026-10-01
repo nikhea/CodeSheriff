@@ -134,7 +134,7 @@ export const getPullRequestFiles = createTool({
 export const postPRReview = createTool({
   id: "post-pr-review",
   description:
-    "Post a review on a PR via Octokit Reviews API: summary body plus optional inline comments. Always uses event COMMENT (non-blocking) for v1. At most 10 inline comments are kept; extras are dropped.",
+    "Post a review on a PR via Octokit Reviews API: summary body plus optional inline comments. Always uses event COMMENT (non-blocking) for v1. At most 10 inline comments are kept; extras are dropped. Comments without a valid diff-hunk line are folded into the summary (never fatal) — but prefer real hunk lines.",
   inputSchema: prIdentifierSchema.extend({
     headSha: z.string().optional().describe("Head commit SHA. Omit to auto-resolve from the PR (recommended)."),
     body: z.string().describe("Summary markdown. Include a `file:line`-style breakdown; inline comments carry the details."),
@@ -142,7 +142,12 @@ export const postPRReview = createTool({
       .array(
         z.object({
           path: z.string().describe("File path in repo"),
-          line: z.number().int().positive().describe("New-file line number from the diff hunk"),
+          line: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("New-file line number from the diff hunk. Omit ONLY if unknown — the comment is folded into the summary instead of posted inline."),
           body: z.string().describe("Inline feedback markdown"),
         })
       )
@@ -154,6 +159,7 @@ export const postPRReview = createTool({
     reviewId: z.number().nullable(),
     mode: z.string(),
     inlineCount: z.number(),
+    foldedCount: z.number(),
   }),
   execute: async (inputData, context) => {
     const octokit = await resolveOctokit(context);
@@ -166,22 +172,43 @@ export const postPRReview = createTool({
           owner, repo, pull_number: pullNumber,
         })
       ).data.head.sha;
-    const comments = (inputData.comments ?? []).slice(0, 10).map((c) => ({ ...c, side: "RIGHT" as const }));
+    // Partition up front: a lineless inline must never fail the whole call
+    // (Mastra validates inputs before execute — optional line + server-side
+    // fold keeps one bad inline from killing the review).
+    const valid = (inputData.comments ?? [])
+      .filter((c) => Number.isInteger(c.line) && (c.line as number) > 0)
+      .slice(0, 10)
+      .map((c) => ({ path: c.path, line: c.line as number, body: c.body, side: "RIGHT" as const }));
+    const folded = (inputData.comments ?? []).filter(
+      (c) => !(Number.isInteger(c.line) && (c.line as number) > 0)
+    );
+    const foldedSection =
+      folded.length === 0
+        ? ""
+        : `\n\n### Notes (no diff line — folded from inline)\n\n${folded
+            .map((c) => `- \`${c.path}\`: ${c.body}`)
+            .join("\n")}`;
+    const fullBody = `${body}${foldedSection}`;
 
-    const attempt = (cs: typeof comments, note?: string) =>
+    const attempt = (cs: typeof valid, note?: string) =>
       octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
         owner, repo, pull_number: pullNumber, commit_id: headSha, event: "COMMENT",
-        body: note ? `${body}\n\n> Note: ${note}` : body,
+        body: note ? `${fullBody}\n\n> Note: ${note}` : fullBody,
         comments: cs as any,
       });
 
     try {
-      const { data } = await attempt(comments);
-      return { reviewId: (data as any)?.id ?? null, mode: comments.length ? "full" : "summary-only", inlineCount: comments.length };
+      const { data } = await attempt(valid);
+      return {
+        reviewId: (data as any)?.id ?? null,
+        mode: valid.length ? "full" : "summary-only",
+        inlineCount: valid.length,
+        foldedCount: folded.length,
+      };
     } catch (err: any) {
-      if (err?.status === 422 && comments.length > 0) {
-        const { data } = await attempt([], `${comments.length} inline comment(s) omitted (lines not in diff).`);
-        return { reviewId: (data as any)?.id ?? null, mode: "summary-only", inlineCount: 0 };
+      if (err?.status === 422 && valid.length > 0) {
+        const { data } = await attempt([], `${valid.length + folded.length} inline comment(s) omitted (lines not in diff).`);
+        return { reviewId: (data as any)?.id ?? null, mode: "summary-only", inlineCount: 0, foldedCount: folded.length };
       }
       throw err;
     }

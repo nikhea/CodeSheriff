@@ -10,14 +10,20 @@ import {
 } from "../queue/issue-queue";
 import { postStartedComment } from "../lib/github-post";
 
+import { getGitHubChannelAdapter } from "../lib/github-channel";
+
 /**
- * GitHub App webhook ingress.
+ * GitHub App webhook ingress (the App's single webhook URL — all subscribed
+ * events land here).
  * Verifies HMAC via @octokit/webhooks, handles:
  * - pull_request opened/synchronize/... → BullMQ pr-review queue
  * - pull_request closed → drop queued review jobs for the SHA
  * - issues opened → BullMQ issue-triage queue (+ reopened re-triage)
  * - issues closed → drop queued triage jobs for the issue
  * - issue_comment created (human) → follow-up triage pass
+ * - issue_comment / pull_request_review_comment → relayed to the channel
+ *   adapter (single-URL Apps can't point comment events at the adapter
+ *   route directly), which drives @mention replies
  * Other events/actions are acknowledged without work.
  */
 
@@ -60,6 +66,37 @@ export const githubWebhookRoute = registerApiRoute("/webhooks/github", {
       return c.json({ msg: "pong", zen: payload?.zen ?? null });
     }
 
+    // Comment events drive @mention replies, but a GitHub App exposes only
+    // ONE webhook URL — they arrive here, not at the adapter's auto-mounted
+    // route. Re-sign nothing: forward the raw body + signature headers to
+    // the channel adapter, which verifies and dispatches itself. The adapter
+    // no-ops on non-mentions; issue_comment flow continues to follow-up
+    // triage below (which yields to the adapter on mentions).
+    let relayStatus = 0;
+    if (event === "issue_comment" || event === "pull_request_review_comment") {
+      try {
+        const headers = new Headers();
+        headers.set("content-type", c.req.header("content-type") ?? "application/json");
+        for (const h of ["x-hub-signature-256", "x-github-event", "x-github-delivery", "user-agent"]) {
+          const v = c.req.header(h);
+          if (v) headers.set(h, v);
+        }
+        relayStatus = (
+          await getGitHubChannelAdapter().handleWebhook(
+            new Request(c.req.url, { method: "POST", headers, body: raw })
+          )
+        ).status;
+        logger.info?.(`[webhook] relayed ${event} delivery=${delivery} adapter=${relayStatus}`);
+      } catch (err: any) {
+        // 5xx → GitHub redelivers. Never ack-and-drop a mention.
+        logger.error?.(`[webhook] channel relay failed: ${err?.message ?? err}`);
+        return c.json({ error: "channel unavailable" }, 503);
+      }
+      if (event === "pull_request_review_comment") {
+        return c.json({ received: true, relayed: relayStatus, delivery });
+      }
+    }
+
     if (event !== "pull_request" && event !== "issues" && event !== "issue_comment") {
       return c.json({ received: true, skipped: `event=${event}` });
     }
@@ -93,6 +130,14 @@ export const githubWebhookRoute = registerApiRoute("/webhooks/github", {
       // payloads carry pull_request; plain issues don't.
       if (payload.issue?.pull_request) {
         return c.json({ received: true, skipped: "comment-on-pr" });
+      }
+      // Mention ownership: comments tagging the bot belong to the channel
+      // adapter (relayed above) — triage replying too would double-post.
+      const botBase = (process.env.GITHUB_BOT_USERNAME ?? "github-bot")
+        .toLowerCase()
+        .replace(/\[bot\]$/, "");
+      if (String(payload.comment?.body ?? "").toLowerCase().includes(`@${botBase}`)) {
+        return c.json({ received: true, skipped: "mention-owned-by-channel", relayed: relayStatus });
       }
       logger.info?.(
         `[webhook] issue_comment.created delivery=${delivery} repo=${issueOwner}/${issueRepo} issue=${issueNumber} comment=${commentId}`

@@ -25,8 +25,11 @@ bun install
 bun dev:all            # dev server (:4111) + queue worker
 ```
 
-Point the App's webhook URL at `https://<tunnel>/webhooks/github`, and the
-channel adapter events at `https://<tunnel>/api/agents/code-review-agent/channels/github/webhook`.
+Point the App's (single) webhook URL at `https://<tunnel>/webhooks/github`
+and subscribe it to **Pull request**, **Issues**, **Issue comment**, and
+**Pull request review comment**. Comment events are relayed internally to
+the channel adapter (`code-review-agent`), which owns @mention replies —
+no second URL needed (a GitHub App exposes only one).
 Find the bot's numeric id for `GITHUB_BOT_USER_ID` (loop prevention) with:
 
 ```bash
