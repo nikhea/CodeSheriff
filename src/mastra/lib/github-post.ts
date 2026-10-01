@@ -1,4 +1,5 @@
 import { getInstallationOctokit } from "./github-app";
+import { getReviewDepth } from "./review-config";
 /** Marker embedded in review bodies for dedupe/tracing. */
 export function reviewMarker(sha: string): string {
   return `<!-- codesheriff-review ${sha} -->`;
@@ -133,13 +134,17 @@ export interface PostReviewInput {
   }>;
 }
 
-function buildBody(input: PostReviewInput, mode: string): string {
+export function buildBody(input: PostReviewInput, mode: string): string {
+  const reviewed = input.fileReviews.map((f) => f.filename);
+  const depth = getReviewDepth(reviewed.length).split(" — ")[0];
   const lines = [
     `## CodeSheriff Review ${mode === "summary-only" ? "(update)" : ""}`.trim(),
     ``,
     input.summary,
     ``,
     `**Score:** ${input.qualityScore}/10 — **${input.verdict}** (v1 posts COMMENT only, non-blocking)`,
+    ``,
+    `**Coverage:** ${reviewed.length} file(s) reviewed (${depth} depth)`,
     ``,
   ];
   const section = (title: string, items: string[]) => {
@@ -153,6 +158,9 @@ function buildBody(input: PostReviewInput, mode: string): string {
   section("Positive Notes ✅", input.positiveNotes);
   if (input.skippedFiles.length) {
     lines.push(`<details><summary>Skipped files (${input.skippedFiles.length})</summary>`, ``, input.skippedFiles.map((f) => `- \`${f}\``).join("\n"), `</details>`, ``);
+  }
+  if (reviewed.length) {
+    lines.push(`<details><summary>Reviewed files (${reviewed.length})</summary>`, ``, reviewed.map((f) => `- \`${f}\``).join("\n"), `</details>`, ``);
   }
   lines.push(reviewMarker(input.headSha));
   return lines.join("\n");
