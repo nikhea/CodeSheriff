@@ -1,5 +1,9 @@
 import { Agent } from "@mastra/core/agent";
-import { codeStandardsSkill, securityReviewSkill, performanceReviewSkill } from "../skills/review-skills";
+import {
+  codeStandardsSkill,
+  securityReviewSkill,
+  performanceReviewSkill,
+} from "../skills/review-skills";
 import {
   parseGitHubPRUrl,
   getPullRequest,
@@ -20,12 +24,12 @@ export const codeReviewAgent = new Agent({
   name: "CodeSheriff PR Reviewer",
   model: [
     {
-      model: "nvidia/meta/muse-glimmer-30b",
+      model: "ollama-cloud/gpt-oss:120b",
       maxRetries: 2,
     },
     {
-      model: "ollama-cloud/gpt-oss:120b",
-      maxRetries: 3,
+      model: "nvidia/meta/muse-glimmer-30b",
+      maxRetries: 2,
     },
   ],
   instructions: `You are CodeSheriff, an expert code reviewer. Provide thorough, constructive PR reviews with actionable file:line feedback.
@@ -109,4 +113,7 @@ Good patterns worth acknowledging.`,
   },
   skills: [codeStandardsSkill, securityReviewSkill, performanceReviewSkill],
   memory: rallyaMemory,
+  defaultOptions: {
+    maxSteps: 30,
+  },
 });

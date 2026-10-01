@@ -223,7 +223,9 @@ const reviewFiles = createStep({
       : reviewableFiles.map((f) => ({ ...f, content: "" }));
 
     const batches = batchFiles(entries, includeContent);
-    const isLargePR = reviewableFiles.length > MEDIUM_PR_MAX;
+
+    // Batches are independent — always run in parallel. (Sequential only
+    // throttles wall-clock; rate limits are guarded by the queue limiter.)
 
     function buildPrompt(batch: FileEntry[], batchIndex: number): string {
       const label =
@@ -262,16 +264,8 @@ For EACH file, return an entry with the filename and an array of issues found (e
     }
 
     let allReviews: z.infer<typeof fileReviewSchema>[];
-
-    if (isLargePR) {
-      const results = await Promise.all(batches.map((batch, i) => reviewBatch(batch, i)));
-      allReviews = results.flat();
-    } else {
-      allReviews = [];
-      for (let i = 0; i < batches.length; i++) {
-        allReviews.push(...(await reviewBatch(batches[i], i)));
-      }
-    }
+    const results = await Promise.all(batches.map((batch, i) => reviewBatch(batch, i)));
+    allReviews = results.flat();
 
     return { owner, repo, pullNumber, pr, fileReviews: allReviews, skippedFiles };
   },
