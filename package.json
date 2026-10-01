@@ -20,7 +20,8 @@
     "dev:all": "concurrently -n server,worker -c blue,green \"bun run dev\" \"bun run worker\" --kill-others",
     "build": "mastra build",
     "start": "mastra start",
-    "worker": "bun src/mastra/queue/worker.ts"
+    "worker": "bun src/mastra/queue/worker.ts",
+    "check:skills": "bun scripts/check-skills-sync.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.73.0",
