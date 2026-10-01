@@ -58,10 +58,12 @@ must be green first.
 ### Phase N2 — GitHub channel adapter
 `channels: { adapters: { github: createGitHubAdapter() } }` on
 `code-review-agent` (`@chat-adapter/github` dep). Set `GITHUB_BOT_USERNAME`
-+ numeric bot user ID (no self-reply loops). Subscribe App to Issue comment
-+ PR review comment events → auto-mounted
-`/api/agents/code-review-agent/channels/github/webhook`.
-Existing `/webhooks/github` keeps `pull_request` events (no double-handling).
++ numeric bot user ID (no self-reply loops). A GitHub App exposes ONE
+webhook URL, so comment events land on `/webhooks/github` and are relayed
+internally to the adapter (which no-ops on non-mentions); the auto-mounted
+`/api/agents/code-review-agent/channels/github/webhook` is not pointed at
+directly. Triage follow-ups yield to the adapter on mentions (no
+double-replies).
 
 ### Phase N3 — Mention gating
 Instructions: review-related mentions only. Structured reviews stay on the
