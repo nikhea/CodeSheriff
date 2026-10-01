@@ -128,6 +128,7 @@ export interface PostReviewInput {
   suggestions: string[];
   positiveNotes: string[];
   skippedFiles: string[];
+  attemptedFiles: string[];
   fileReviews: Array<{
     filename: string;
     issues: Array<{ severity: string; category: string; line?: string; message: string }>;
@@ -136,6 +137,8 @@ export interface PostReviewInput {
 
 export function buildBody(input: PostReviewInput, mode: string): string {
   const reviewed = input.fileReviews.map((f) => f.filename);
+  const reviewedSet = new Set(reviewed);
+  const failed = (input.attemptedFiles ?? []).filter((f) => !reviewedSet.has(f));
   const depth = getReviewDepth(reviewed.length).split(" — ")[0];
   const lines = [
     `## CodeSheriff Review ${mode === "summary-only" ? "(update)" : ""}`.trim(),
@@ -144,7 +147,7 @@ export function buildBody(input: PostReviewInput, mode: string): string {
     ``,
     `**Score:** ${input.qualityScore}/10 — **${input.verdict}** (v1 posts COMMENT only, non-blocking)`,
     ``,
-    `**Coverage:** ${reviewed.length} file(s) reviewed (${depth} depth)`,
+    `**Coverage:** ${reviewed.length} file(s) reviewed (${depth} depth)${failed.length ? `, ${failed.length} failed to review` : ""}`,
     ``,
   ];
   const section = (title: string, items: string[]) => {
@@ -161,6 +164,9 @@ export function buildBody(input: PostReviewInput, mode: string): string {
   }
   if (reviewed.length) {
     lines.push(`<details><summary>Reviewed files (${reviewed.length})</summary>`, ``, reviewed.map((f) => `- \`${f}\``).join("\n"), `</details>`, ``);
+  }
+  if (failed.length) {
+    lines.push(`<details><summary>Failed to review (${failed.length}) — re-push to retry</summary>`, ``, failed.map((f) => `- \`${f}\``).join("\n"), `</details>`, ``);
   }
   lines.push(reviewMarker(input.headSha));
   return lines.join("\n");

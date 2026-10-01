@@ -93,6 +93,7 @@ const categorizedSchema = prBaseSchema.extend({
 const reviewedSchema = prBaseSchema.extend({
   fileReviews: z.array(fileReviewSchema),
   skippedFiles: z.array(z.string()),
+  attemptedFiles: z.array(z.string()),
 });
 
 const postedSchema = z.object({
@@ -106,14 +107,21 @@ const postedSchema = z.object({
 const aggregatedSchema = prBaseSchema.extend(aggregateSummarySchema.shape).extend({
   fileReviews: z.array(fileReviewSchema),
   skippedFiles: z.array(z.string()),
+  attemptedFiles: z.array(z.string()),
 });
 
 const finalOutputSchema = aggregatedSchema.extend({ posted: postedSchema });
 
 /**
- * Build a review summary from salvaged model prose. Extracts the model's own
+ * Build a review summary from salvaged model output. Extracts the model's own
  * score/verdict instead of stamping defaults — a hardcoded 7/COMMENT over
- * model prose produces self-contradicting reviews.
+ * model output produces self-contradicting reviews.
+ *
+ * Handles three shapes: raw JSON envelopes (e.g.
+ * {"qualityScore":9,"verdict":"APPROVE","summary":"...","issues":[]}),
+ * truncated JSON (key patterns without parseable body), and prose
+ * ("Quality Score: 9" / "Verdict: APPROVE"). Falls back to 7/COMMENT only
+ * when nothing parseable is found.
  */
 export function parseSalvagedReview(prose: string): z.infer<typeof aggregateSummarySchema> {
   const empty = {
@@ -123,19 +131,56 @@ export function parseSalvagedReview(prose: string): z.infer<typeof aggregateSumm
     suggestions: [],
     positiveNotes: [],
   };
-  const scoreMatch = prose.match(/Quality Score:\s*(\d{1,2})/i);
-  const verdictMatch = prose.match(/Verdict:\s*(APPROVE|REQUEST_CHANGES|COMMENT)/i);
-  let qualityScore = 7;
-  if (scoreMatch) qualityScore = Math.min(10, Math.max(1, parseInt(scoreMatch[1], 10)));
-  const v = verdictMatch?.[1]?.toUpperCase();
+  const numFrom = (re: RegExp): number | undefined => {
+    const m = prose.match(re);
+    return m ? parseInt(m[1], 10) : undefined;
+  };
+  const strFrom = (re: RegExp): string | undefined => {
+    const m = prose.match(re);
+    return m?.[1];
+  };
+
+  let qualityScore: number | undefined;
+  let verdictRaw: string | undefined;
+  let summaryText: string | undefined;
+  let wasJson = false;
+
+  // 1. Raw JSON envelope (wrong keys, e.g. "issues" instead of sections).
+  try {
+    const parsed = JSON.parse(prose.trim());
+    if (parsed && typeof parsed === "object") {
+      wasJson = true;
+      if (typeof parsed.qualityScore === "number") qualityScore = parsed.qualityScore;
+      if (typeof parsed.verdict === "string") verdictRaw = parsed.verdict;
+      if (typeof parsed.summary === "string" && parsed.summary.trim()) {
+        summaryText = parsed.summary.trim();
+      }
+    }
+  } catch {
+    /* not raw JSON — fall through to patterns */
+  }
+
+  // 2. JSON-key patterns (truncated JSON that won't parse).
+  qualityScore ??= numFrom(/"qualityScore"\s*:\s*(\d{1,2})/i);
+  verdictRaw ??= strFrom(/"verdict"\s*:\s*"?(APPROVE|REQUEST_CHANGES|COMMENT)"?/i);
+  // 3. Prose patterns (original salvage).
+  qualityScore ??= numFrom(/Quality Score:\s*(\d{1,2})/i);
+  verdictRaw ??= strFrom(/Verdict:\s*(APPROVE|REQUEST_CHANGES|COMMENT)/i);
+
+  const score = qualityScore === undefined ? 7 : Math.min(10, Math.max(1, qualityScore));
+  const v = verdictRaw?.toUpperCase();
   const verdict = (v === "APPROVE" || v === "REQUEST_CHANGES" ? v : "COMMENT") as
     | "APPROVE"
     | "REQUEST_CHANGES"
     | "COMMENT";
+  // Never dump raw JSON into the review body — synthesize a readable line.
   const summary =
-    prose.slice(0, 4000) +
-    "\n\n> Note: score and verdict were recovered from model prose (structured synthesis failed).";
-  return { summary, qualityScore, verdict, ...empty };
+    (summaryText ??
+      (wasJson
+        ? `Model returned ${verdict} ${score}/10 with no sectioned findings.`
+        : prose.slice(0, 4000))) +
+    "\n\n> Note: score and verdict were recovered from model output (structured synthesis failed).";
+  return { summary, qualityScore: score, verdict, ...empty };
 }
 
 const fetchPRContext = createStep({
@@ -248,7 +293,7 @@ const reviewFiles = createStep({
 
     // Empty PR (or everything filtered): skip model calls entirely.
     if (reviewableFiles.length === 0) {
-      return { owner, repo, pullNumber, pr, fileReviews: [], skippedFiles };
+      return { owner, repo, pullNumber, pr, fileReviews: [], skippedFiles, attemptedFiles: [] };
     }
 
     const includeContent = reviewableFiles.length <= MEDIUM_PR_MAX;
@@ -351,7 +396,19 @@ For EACH file, return an entry with the filename and an array of issues found (e
     );
     allReviews = results.flat();
 
-    return { owner, repo, pullNumber, pr, fileReviews: allReviews, skippedFiles };
+    // Batches that fell back to [] yield no entries — surface them loudly
+    // instead of silently reporting "0 reviewed". A batch returning [] is
+    // always a failure: the prompt demands one entry per file.
+    const attemptedFiles = reviewableFiles.map((f) => f.filename);
+    const reviewedNames = new Set(allReviews.map((r) => r.filename));
+    const failedFiles = attemptedFiles.filter((f) => !reviewedNames.has(f));
+    if (failedFiles.length > 0) {
+      mastra?.getLogger?.()?.error?.(
+        `[review-files] ${failedFiles.length}/${attemptedFiles.length} files failed structured review (no entries returned): ${failedFiles.join(", ")}`
+      );
+    }
+
+    return { owner, repo, pullNumber, pr, fileReviews: allReviews, skippedFiles, attemptedFiles };
   },
 });
 
@@ -433,7 +490,7 @@ Rules:
       message: `Synthesis complete: ${summary.qualityScore}/10 ${summary.verdict}`,
     });
 
-    return { owner, repo, pullNumber, pr, ...summary, fileReviews, skippedFiles };
+    return { owner, repo, pullNumber, pr, ...summary, fileReviews, skippedFiles, attemptedFiles: inputData.attemptedFiles };
   },
 });
 
@@ -444,7 +501,7 @@ const postReview = createStep({
   outputSchema: finalOutputSchema,
   execute: async ({ inputData, requestContext, mastra, writer }) => {
     const logger = mastra?.getLogger?.() ?? console;
-    const { owner, repo, pullNumber, pr, fileReviews, skippedFiles, ...summary } = inputData as any;
+    const { owner, repo, pullNumber, pr, fileReviews, skippedFiles, attemptedFiles, ...summary } = inputData as any;
 
     // Studio manual runs (no webhook action) default to dry-run: never post real comments by accident.
     const action = (requestContext?.get?.("action") as string | undefined) ?? "manual";
@@ -455,7 +512,7 @@ const postReview = createStep({
         summary: `(dry run) ${String(summary.summary ?? "").slice(0, 500)}`,
       });
       return {
-        ...summary, fileReviews, skippedFiles,
+        ...summary, fileReviews, skippedFiles, attemptedFiles,
         posted: { posted: false, reviewId: null, mode: "dry-run", inlineCount: 0 },
       };
     }
@@ -467,14 +524,14 @@ const postReview = createStep({
         summary: summary.summary, qualityScore: summary.qualityScore, verdict: summary.verdict,
         criticalIssues: summary.criticalIssues, securityConcerns: summary.securityConcerns,
         performanceNotes: summary.performanceNotes, suggestions: summary.suggestions,
-        positiveNotes: summary.positiveNotes, skippedFiles, fileReviews,
+        positiveNotes: summary.positiveNotes, skippedFiles, fileReviews, attemptedFiles,
       });
       logger.info?.(`[post-review] posted repo=${owner}/${repo} pr=${pullNumber} review=${result.reviewId} mode=${result.mode} inline=${result.inlineCount}`);
       await emitProgress(writer, owner, repo, pullNumber, {
         type: "completed",
         summary: `${summary.verdict} ${summary.qualityScore}/10 — review ${result.reviewId} posted (${result.mode}, ${result.inlineCount} inline)`,
       });
-      return { ...summary, fileReviews, skippedFiles, posted: result };
+      return { ...summary, fileReviews, skippedFiles, attemptedFiles, posted: result };
     } catch (err: any) {
       // Never fail the workflow on posting errors — review data is still returned.
       logger.error?.(`[post-review] failed repo=${owner}/${repo} pr=${pullNumber}: ${err?.message ?? err}`);
@@ -483,7 +540,7 @@ const postReview = createStep({
         summary: `Posting failed (${err?.message ?? err}); review data retained`,
       });
       return {
-        ...summary, fileReviews, skippedFiles,
+        ...summary, fileReviews, skippedFiles, attemptedFiles,
         posted: { posted: false, reviewId: null, mode: "failed", inlineCount: 0 },
       };
     }
