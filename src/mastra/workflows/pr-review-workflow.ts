@@ -395,7 +395,15 @@ Rules:
 - verdict: REQUEST_CHANGES if critical issues exist, APPROVE if quality is high, COMMENT otherwise
 - Be specific with file:line references
 - Deduplicate similar issues across files
-- Even with zero findings, return the full JSON object — never prose`;
+- Even with zero findings, return the full JSON object — never prose
+- The JSON object MUST have exactly these keys: summary (string),
+  qualityScore (number), verdict (string), criticalIssues (string[]),
+  securityConcerns (string[]), performanceNotes (string[]),
+  suggestions (string[]), positiveNotes (string[]). Use empty arrays —
+  never omit a key, never null.
+- NEVER emit an "issues" key — that belongs to per-file reviews, not this
+  synthesis. If there is nothing to flag, return empty arrays with a
+  one-sentence summary saying so.`;
 
     const summary = await generateStructured<z.infer<typeof aggregateSummarySchema>>(
       agent,
