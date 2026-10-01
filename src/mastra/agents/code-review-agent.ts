@@ -96,9 +96,9 @@ Good patterns worth acknowledging.`,
     postPRReview,
   },
   skills: [
-    "./src/mastra/skills/code-standards",
-    "./src/mastra/skills/security-review",
-    "./src/mastra/skills/performance-review",
+    "../skills/code-standards",
+    "../skills/security-review",
+    "../skills/performance-review",
   ],
   memory: rallyaMemory,
 });
