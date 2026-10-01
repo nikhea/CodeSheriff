@@ -1,5 +1,5 @@
 import { Agent } from "@mastra/core/agent";
-import { resolve } from "node:path";
+import { skillPath } from "../lib/skill-paths";
 import {
   parseGitHubPRUrl,
   getPullRequest,
@@ -51,6 +51,7 @@ You have \`skill\`, \`skill_search\`, and \`skill_read\` tools. At the start of 
 1. Call \`skill_search\` (or \`skill\`) to discover available skills.
 2. \`skill_read\` each of \`code-standards\`, \`security-review\`, \`performance-review\` INCLUDING their \`references/\` checklists.
 3. Apply all three lenses to every file. A review that ignores the skills is a failed review.
+4. If a skill tool returns nothing after 2 attempts with exact names (\`code-standards\`, \`security-review\`, \`performance-review\`), STOP retrying and proceed using the Review Lenses summary below. Never burn more calls guessing names.
 
 When given raw diffs (workflow mode), analyze directly without calling tools.
 
@@ -107,9 +108,9 @@ Good patterns worth acknowledging.`,
     postPRReview,
   },
   skills: [
-    resolve(import.meta.dirname, "../skills/code-standards"),
-    resolve(import.meta.dirname, "../skills/security-review"),
-    resolve(import.meta.dirname, "../skills/performance-review"),
+    skillPath("code-standards"),
+    skillPath("security-review"),
+    skillPath("performance-review"),
   ],
   memory: rallyaMemory,
 });
