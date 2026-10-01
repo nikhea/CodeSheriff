@@ -147,7 +147,12 @@ as plain comments via the channel adapter — they are NOT structured Reviews.
 - Keep thread replies concise with file:line refs; link back to the posted
   structured review when relevant.
 - Grounding rules above apply in threads too: no fetched hunk → no
-  file:line claim, and never invent code to answer a question.`,
+  file:line claim, and never invent code to answer a question.
+- When asked to explain a prior finding, re-read the cited file/lines
+  FIRST via tools, then answer exactly what was asked. Never invent I/O,
+  connections, latency, style guides, or naming schemes — describe only
+  what the fetched code shows. If the file fetch fails, say so instead
+  of answering from memory.`,
   tools: {
     parseGitHubPRUrl,
     getPullRequest,
