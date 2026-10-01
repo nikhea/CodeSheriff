@@ -16,6 +16,8 @@ import { postReviewToGitHub } from "../lib/github-post";
 const BATCH_CHAR_BUDGET = 400_000;
 /** Max files per agent call. */
 const BATCH_FILE_LIMIT = 40;
+/** Hard cap on files sent for review — extras land in skippedFiles. Bounds model cost on huge PRs. */
+const MAX_REVIEW_FILES = 100;
 
 /** installationId comes from workflow requestContext (worker/webhook); env fallback for Studio. */
 function resolveInstallationId(requestContext?: any): number {
@@ -156,6 +158,10 @@ const categorizeFiles = createStep({
     }
 
     const { owner, repo, pullNumber, pr } = inputData;
+    if (reviewableFiles.length > MAX_REVIEW_FILES) {
+      const extras = reviewableFiles.splice(MAX_REVIEW_FILES);
+      for (const f of extras) skippedFiles.push(`${f.filename} (over ${MAX_REVIEW_FILES}-file cap)`);
+    }
     return { owner, repo, pullNumber, pr, reviewableFiles, skippedFiles };
   },
 });
@@ -196,6 +202,11 @@ const reviewFiles = createStep({
   execute: async ({ inputData, mastra, requestContext }) => {
     const { owner, repo, pullNumber, pr, reviewableFiles, skippedFiles } = inputData;
     const agent = mastra.getAgentById("workflow-review-agent");
+
+    // Empty PR (or everything filtered): skip model calls entirely.
+    if (reviewableFiles.length === 0) {
+      return { owner, repo, pullNumber, pr, fileReviews: [], skippedFiles };
+    }
 
     const includeContent = reviewableFiles.length <= MEDIUM_PR_MAX;
     const reviewDepth = getReviewDepth(reviewableFiles.length);

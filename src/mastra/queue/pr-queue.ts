@@ -86,6 +86,7 @@ export function startPRWorker(mastra: any) {
       connection: getRedisConnection(),
       concurrency: 2,
       limiter: { max: 5, duration: 60_000 },
+      lockDuration: 5 * 60 * 1000, // 5min job timeout — stalled jobs retried via attempts/backoff
     }
   );
 
